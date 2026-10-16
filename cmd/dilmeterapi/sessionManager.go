@@ -27,6 +27,8 @@ type SessionSummaryPlayer struct {
 	ArcanaName  string  `json:"arcanaName"`
 	ArcanaIcon  string  `json:"arcanaIcon,omitempty"`
 	TotalDamage float32 `json:"totalDamage"`
+	OverallHealing DamageBreakdown `json:"overallHealing"`
+	HealingByTarget map[string]DamageBreakdown `json:"healingByTarget"`
 }
 
 type SessionSummaryEnemy struct {
@@ -196,6 +198,8 @@ func (sm *SessionManager) SaveLiveSession(name string) error {
 				ArcanaName:  pstat.TalentName,
 				ArcanaIcon:  "", // Omit from disk serialization (omitempty)
 				TotalDamage: pstat.OverallStats.TotalDamage,
+				OverallHealing: pstat.Overallhealing,
+				HealingByTarget: pstat.HealingByTarget,
 			})
 			for tID, tBreakdown := range pstat.DamageByTarget {
 				targetDamageMap[tID] += tBreakdown.TotalDamage
