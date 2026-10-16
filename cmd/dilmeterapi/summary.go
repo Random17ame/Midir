@@ -73,6 +73,7 @@ type DamageBreakdown struct {
 	CritCount   int                        `json:"critCount"`
 	DPS         float32                    `json:"dps"`
 	CritRate    float32                    `json:"critRate"`
+	OvershieldProvided float32             `json:"overshieldProvided"`
 	StartTime   int64                      `json:"startTime,omitempty"` // NEW: Unix timestamp of the first hit
 	EndTime     int64                      `json:"endTime,omitempty"`   // NEW: Unix timestamp of the last hit
 	Skills      map[uint16]SkillStats      `json:"skills"`
@@ -94,6 +95,8 @@ type PlayerStats struct {
 	TalentColor         string                     `json:"talentColor,omitempty"`
 	MissingAppearPacket bool                       `json:"missingAppearPacket"` // NEW: True if we haven't seen an appear packet (cache warning)
 	OverallStats        DamageBreakdown            `json:"overallStats"`
+	OverallHealing      DamageBreakdown            `json:"overallHealing"`
+	HealingByTarget     map[string]DamageBreakdown `json:"healingByTarget"`
 	DamageByTarget      map[string]DamageBreakdown `json:"damageByTarget"` // Key is Target ID
 	SkillUses           []SkillUseEvent            `json:"-"`
 	Deaths              []int64                    `json:"deaths,omitempty"`
