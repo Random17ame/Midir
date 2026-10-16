@@ -190,6 +190,7 @@ func (sm *SessionManager) SaveLiveSession(name string) error {
 		summaryData.TotalDamage = summary.TotalDamage
 
 		targetDamageMap := make(map[string]float32)
+		var totalPartyHealing float32 = 0 // Injected to accumulate total party healing
 
 		for _, pstat := range summary.Players {
 			summaryData.Players = append(summaryData.Players, SessionSummaryPlayer{
@@ -203,14 +204,8 @@ func (sm *SessionManager) SaveLiveSession(name string) error {
 			})
 			for tID, tBreakdown := range pstat.DamageByTarget {
 				targetDamageMap[tID] += tBreakdown.TotalDamage
-			}
-			// Map support targets to retain names across saved sessions
-			for tIDStr, hBreakdown := range pstat.HealingByTarget {
-				tIDUint, _ := strconv.ParseUint(tIDStr, 10, 64)
-				if name, ok := sm.aggregator.targetNames[tIDUint]; ok {
-					sm.aggregator.targetNames[tIDUint] = name
-					}
-				_ = hBreakdown
+				}
+				totalPartyHealing += pstat.OverallHealing.TotalDamage
 				}
 		}
 
@@ -699,6 +694,7 @@ func (sm *SessionManager) MigrateSession(sessionID string) error {
 
 	summaryData.Duration = summary.EncounterDuration
 	summaryData.TotalDamage = summary.TotalDamage
+	summaryData.TotalHealing = totalPartyHealing
 	
 	targetDamageMap := make(map[string]float32)
 
