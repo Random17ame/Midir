@@ -534,27 +534,27 @@ func (a *Aggregator) processPublicStatUpdate(p *packet.GamePacket) {
 		baseChanged = true
 	}
 	if val, ok := statUpdate.Stats[31]; ok {
-			// Mathematical Delta Tracking Rule: Catch shield expansions live as they are applied
-	if val > entity.AdditionalHP {
-				shieldDelta := val - entity.AdditionalHP
+		// Mathematical Delta Tracking Rule: Catch shield expansions live as they are applied
+		if val > entity.AdditionalHP {
+			shieldDelta := val - entity.AdditionalHP
+			
+			// Track the active player's localized context session to score the shield points
+			for _, pStats := range a.playerStats {
+				// Attribute to the healer profile actively registered in the tracking instance
+				pStats.OverallHealing.OvershieldProvided += shieldDelta
 				
-				// Identify who cast the shield by checking if they are logged in playerCache
-				if playerInfo, isPlayer := playerCache.Get(statUpdate.EntityId); isPlayer {
-					stats := a.getOrCreatePlayerStats(playerInfo)
-					stats.OverallHealing.OvershieldProvided += shieldDelta
-					
-					targetIdStr := strconv.FormatUint(statUpdate.EntityId, 10)
-					targetBreakdown, exists := stats.HealingByTarget[targetIdStr]
-					if !exists {
-						targetBreakdown = newDamageBreakdown()
-					}
-					targetBreakdown.OvershieldProvided += shieldDelta
-					stats.HealingByTarget[targetIdStr] = targetBreakdown
+				targetIdStr := strconv.FormatUint(statUpdate.EntityId, 10)
+				targetBreakdown, exists := pStats.HealingByTarget[targetIdStr]
+				if !exists {
+					targetBreakdown = newDamageBreakdown()
 				}
+				targetBreakdown.OvershieldProvided += shieldDelta
+				pStats.HealingByTarget[targetIdStr] = targetBreakdown
 			}
-			entity.AdditionalHP = val
-			bonusChanged = true
 		}
+		entity.AdditionalHP = val
+		bonusChanged = true
+	}
 	if baseChanged || bonusChanged {
 		entity.MaxHP = entity.BaseHP + entity.AdditionalHP
 	}
