@@ -717,8 +717,8 @@ func (a *Aggregator) processCombatAction(p *packet.GamePacket) {
 						},
 					}
 
-					// Fetch dynamic active health layers natively from Midir's entity state engine
-					if entityState, isCached := a.entityCache[sub.EntityId]; isCached {
+										// Fetch dynamic active health layers natively from Midir's entity state engine
+					if entityState, isCached := a.entityCache[sub.EntityId]; isCached && entityState.MaxHP > 0 {
 						
 						// Identify if an overshield buffer is actively present on the target teammate
 						hasOvershieldBuffer := entityState.AdditionalHP > 0
@@ -778,7 +778,7 @@ func (a *Aggregator) processCombatAction(p *packet.GamePacket) {
 						}
 
 					} else {
-						// Fallback Gate: If player state is uncached, treat the entire hit as standard healing
+						// Fallback Gate: If player state is uncached or uninitialized, log the full hit as baseline healing
 						a.updateBreakdown(&stats.OverallHealing, tempHealPacket, attackSkillId, false)
 						
 						targetBreakdown, exists := stats.HealingByTarget[targetIdStr]
