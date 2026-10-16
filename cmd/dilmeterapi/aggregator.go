@@ -670,7 +670,6 @@ func (a *Aggregator) processCombatAction(p *packet.GamePacket) {
 			sub.Hit.Damage = 0
 			sub.Hit.ManaDamage = 0
 		}
-
 		// Optimization Rule: Revert safety gate to let standard combat subpackets pass cleanly
 		if sub.Hit == nil || (sub.Hit.Damage <= 0 && sub.Hit.ManaDamage <= 0) {
 			continue
@@ -737,9 +736,7 @@ func (a *Aggregator) processCombatAction(p *packet.GamePacket) {
 			a.updateDamageTaken(targetInfo, attackerId, attackSkillId, sub.Hit.Damage, float32(sub.Hit.ManaDamage))
 		}
 	}
-}
-
-				
+}			
 				// Fetch dynamic active health layers natively from Midir's entity state engine
 				if entityState, isCached := a.entityCache[sub.EntityId]; isCached && entityState.CurrentHP >= entityState.MaxHP {
 					// Separate and log overflow points straight to your custom shield property
