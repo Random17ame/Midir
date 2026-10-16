@@ -534,10 +534,27 @@ func (a *Aggregator) processPublicStatUpdate(p *packet.GamePacket) {
 		baseChanged = true
 	}
 	if val, ok := statUpdate.Stats[31]; ok {
-		entity.AdditionalHP = val
-		bonusChanged = true
-	}
-
+			// Mathematical Delta Tracking Rule: Catch shield expansions live as they are applied
+	if val > entity.AdditionalHP {
+				shieldDelta := val - entity.AdditionalHP
+				
+				// Identify who cast the shield by checking if they are logged in playerCache
+				if playerInfo, isPlayer := playerCache.Get(statUpdate.EntityId); isPlayer {
+					stats := a.getOrCreatePlayerStats(playerInfo)
+					stats.OverallHealing.OvershieldProvided += shieldDelta
+					
+					targetIdStr := strconv.FormatUint(statUpdate.EntityId, 10)
+					targetBreakdown, exists := stats.HealingByTarget[targetIdStr]
+					if !exists {
+						targetBreakdown = newDamageBreakdown()
+					}
+					targetBreakdown.OvershieldProvided += shieldDelta
+					stats.HealingByTarget[targetIdStr] = targetBreakdown
+				}
+			}
+			entity.AdditionalHP = val
+			bonusChanged = true
+		}
 	if baseChanged || bonusChanged {
 		entity.MaxHP = entity.BaseHP + entity.AdditionalHP
 	}
