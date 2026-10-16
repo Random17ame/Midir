@@ -366,6 +366,7 @@
         <div class="main-dashboard-content">
           <v-tabs v-model="tab" grow density="compact" class="modern-tabs mb-6">
             <v-tab value="damageDealt">Damage Dealt</v-tab>
+            <v-tab value="healing">Healing Done</v-tab>
             <v-tab value="damageTaken">Damage Taken</v-tab>
             <v-tab value="graph">Graph</v-tab>
           </v-tabs>
@@ -373,7 +374,10 @@
           <v-window v-model="tab">
             <v-window-item value="damageDealt">
               <apply-damage-by-skill :attackerNameMap="attackerNameMap" />
-            </v-window-item>
+              </v-window-item>
+            <v-window-item value="healing">
+              <apply-healing-by-skill :attackerNameMap="attackerNameMap" />
+              </v-window-item>
             <v-window-item value="damageTaken">
               <damage-taken-by-source />
             </v-window-item>
@@ -402,6 +406,7 @@ import {
 } from "@/utils/targetGrouping";
 import SessionPanel from "@/components/SessionPanel.vue";
 import ApplyDamageBySkillComponent from "@/components/applyDamageBySkill.vue";
+import ApplyHealingBySkillComponent from "@/components/applyHealingBySkill.vue";
 import DamageTakenBySourceComponent from "@/components/DamageTakenBySource.vue";
 import DamageGraph from "@/components/DamageGraph.vue";
 import TargetConditionView from "@/components/TargetConditionView.vue";
@@ -419,6 +424,7 @@ export default defineComponent({
   components: {
     SessionPanel,
     ApplyDamageBySkill: ApplyDamageBySkillComponent,
+    ApplyHealingBySkill: ApplyHealingBySkillComponent,
     DamageTakenBySource: DamageTakenBySourceComponent,
     DamageGraph,
     TargetConditionView,
