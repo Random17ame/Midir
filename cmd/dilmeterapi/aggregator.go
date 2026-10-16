@@ -533,15 +533,17 @@ func (a *Aggregator) processPublicStatUpdate(p *packet.GamePacket) {
 		baseChanged = true
 	}
 	if val, ok := statUpdate.Stats[31]; ok {
-		// Mathematical Delta Intercept: Track overshield capacity changes
+		// Mathematical Delta Intercept: Capture shield expansions live as they occur
 		if val > entity.AdditionalHP {
 			shieldDelta := val - entity.AdditionalHP
 			targetIdStr := strconv.FormatUint(statUpdate.EntityId, 10)
 			
-			// Append the shield delta directly to all active caster logs
+			// Append the shield delta directly to all active caster data structures
 			for _, pStats := range a.playerStats {
+				// 1. Log to the overall player total row
 				pStats.OvershieldProvided += shieldDelta
 				
+				// 2. Log to the player's target map breakout
 				targetBreakdown, exists := pStats.HealingByTarget[targetIdStr]
 				if !exists {
 					targetBreakdown = newDamageBreakdown()
@@ -567,7 +569,6 @@ func (a *Aggregator) processPublicStatUpdate(p *packet.GamePacket) {
 		}
 	}
 }
-
 // GetEntityHP retrieves the current HP fields for a cached entity in a thread-safe manner.
 func (a *Aggregator) GetEntityHP(entityID uint64) (currentHp, baseHp, additionalHp, maxHp float32, exists bool) {
 	a.mu.RLock()
@@ -719,33 +720,38 @@ func (a *Aggregator) processCombatAction(p *packet.GamePacket) {
 				attackSkillId == 30401 ||                   // Spirit Wand Awakening
 				attackSkillId == 35121                      // Spirit Healing Wand Awakening Alternate
 			
-			// ROUTE A: Support Healing Done tracking pipeline triggers if a support action is detected
-							if sub.IsHealingSkill && isTargetAPlayer && sub.HealingAmount > 0 {
-			if playerInfo, isCasterPlayer := playerCache.Get(casterID); isCasterPlayer {
+					// ROUTE A: Process supportive party healing metrics cleanly
+		if sub.Hit != nil && sub.Hit.Damage < 0 && (sub.Hit.Options&1) != 0 { 
+			if playerInfo, isPlayer := playerCache.Get(attackerId); isPlayer {
 				stats := a.getOrCreatePlayerStats(playerInfo)
 				targetIdStr := strconv.FormatUint(sub.EntityId, 10)
 				
+				// Convert negative raw damage wound values to positive healing numbers
+				healAmount := -sub.Hit.Damage
+
 				tempHealPacket := &packet.CombatActionPacket{
 					Hit: &packet.CombatActionPacketHitInfo{
-						Damage:  sub.HealingAmount,
+						Damage:  healAmount,
 						Options: sub.Hit.Options,
 					},
 				}
 				
-				// Standard raw healing calculation loop rule
+				// Record to the overall player total healing breakdown
 				a.updateBreakdown(&stats.OverallHealing, tempHealPacket, attackSkillId, false)
 				
+				// Safely record individual skill casts under the player's healing skills map
 				healStats, exists := stats.HealingSkills[attackSkillId]
 				if !exists {
-					healStats = SkillStats{}
+					healStats = SkillStats{ID: attackSkillId}
 				}
-				healStats.TotalDamage += sub.HealingAmount
+				healStats.TotalDamage += healAmount
 				healStats.Count++
 				if (sub.Hit.Options & packet.CombatActionHitOptionsCritical) != 0 {
 					healStats.CritCount++
 				}
 				stats.HealingSkills[attackSkillId] = healStats
 				
+				// Record individual target distributions
 				targetBreakdown, exists := stats.HealingByTarget[targetIdStr]
 				if !exists {
 					targetBreakdown = newDamageBreakdown()
