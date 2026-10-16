@@ -512,19 +512,18 @@ func (a *Aggregator) processPublicStatUpdate(p *packet.GamePacket) {
 	if err != nil {
 		return
 	}
-
 	a.mu.Lock()
 	defer a.mu.Unlock()
-
+	
 	entity, ok := a.entityCache[statUpdate.EntityId]
 	if !ok {
 		return
 	}
-
+	
 	hpChanged := false
 	baseChanged := false
 	bonusChanged := false
-
+	
 	if val, ok := statUpdate.Stats[28]; ok {
 		entity.CurrentHP = val
 		hpChanged = true
@@ -533,30 +532,28 @@ func (a *Aggregator) processPublicStatUpdate(p *packet.GamePacket) {
 		entity.BaseHP = val
 		baseChanged = true
 	}
-		// Look up slot 31 explicitly to filter and extract pure overshield deltas
 	if val, ok := statUpdate.Stats[31]; ok {
-		// Mathematical Delta Tracking Rule: Catch shield expansions live as they are applied
+		// Mathematical Delta Intercept: Track overshield capacity changes
 		if val > entity.AdditionalHP {
-					shieldDelta := val - entity.AdditionalHP
-		
-		// Convert the recipient target ID once before the loop
-		targetIdStr := strconv.FormatUint(statUpdate.EntityId, 10)
-
-		// Log the absorption capacity directly onto the caster's live player statistics
-		for _, pStats := range a.playerStats {
-			pStats.OverallHealing.OvershieldProvided += shieldDelta
+			shieldDelta := val - entity.AdditionalHP
+			targetIdStr := strconv.FormatUint(statUpdate.EntityId, 10)
 			
-			targetBreakdown, exists := pStats.HealingByTarget[targetIdStr]
-			if !exists {
-				targetBreakdown = newDamageBreakdown()
+			// Append the shield delta directly to all active caster logs
+			for _, pStats := range a.playerStats {
+				pStats.OvershieldProvided += shieldDelta
+				
+				targetBreakdown, exists := pStats.HealingByTarget[targetIdStr]
+				if !exists {
+					targetBreakdown = newDamageBreakdown()
+				}
+				targetBreakdown.OvershieldProvided += shieldDelta
+				pStats.HealingByTarget[targetIdStr] = targetBreakdown
 			}
-			targetBreakdown.OvershieldProvided += shieldDelta
-			pStats.HealingByTarget[targetIdStr] = targetBreakdown
-		}
 		}
 		entity.AdditionalHP = val
 		bonusChanged = true
 	}
+	
 	if baseChanged || bonusChanged {
 		entity.MaxHP = entity.BaseHP + entity.AdditionalHP
 	}
@@ -723,25 +720,11 @@ func (a *Aggregator) processCombatAction(p *packet.GamePacket) {
 				attackSkillId == 35121                      // Spirit Healing Wand Awakening Alternate
 			
 			// ROUTE A: Support Healing Done tracking pipeline triggers if a support action is detected
-					if sub.IsHealingSkill && isTargetAPlayer && sub.HealingAmount > 0 {
+							if sub.IsHealingSkill && isTargetAPlayer && sub.HealingAmount > 0 {
 			if playerInfo, isCasterPlayer := playerCache.Get(casterID); isCasterPlayer {
 				stats := a.getOrCreatePlayerStats(playerInfo)
 				targetIdStr := strconv.FormatUint(sub.EntityId, 10)
 				
-				// Standardize health checks across both teammates and self-targeting routines
-				var currentHp, maxHp float32
-				isOvershieldOverflow := false
-
-				if targetEntity, exists := a.entityCache[sub.EntityId]; exists {
-					currentHp = targetEntity.CurrentHP
-					maxHp = targetEntity.MaxHP
-					isOvershieldOverflow = currentHp >= maxHp && maxHp > 0
-				} else if targetPl, exists := playerCache.Get(sub.EntityId); exists {
-					// Fallback lookup: route through player profiles natively
-					_ = targetPl
-					isOvershieldOverflow = true // Treat untracked player targets at max capacity safely
-				}
-
 				tempHealPacket := &packet.CombatActionPacket{
 					Hit: &packet.CombatActionPacketHitInfo{
 						Damage:  sub.HealingAmount,
@@ -749,12 +732,8 @@ func (a *Aggregator) processCombatAction(p *packet.GamePacket) {
 					},
 				}
 				
-				// Append numbers smoothly to both raw healing counters and active overshield collectors
-				if isOvershieldOverflow {
-					stats.OvershieldProvided += sub.HealingAmount
-				} else {
-					a.updateBreakdown(&stats.OverallHealing, tempHealPacket, attackSkillId, false)
-				}
+				// Standard raw healing calculation loop rule
+				a.updateBreakdown(&stats.OverallHealing, tempHealPacket, attackSkillId, false)
 				
 				healStats, exists := stats.HealingSkills[attackSkillId]
 				if !exists {
@@ -771,12 +750,7 @@ func (a *Aggregator) processCombatAction(p *packet.GamePacket) {
 				if !exists {
 					targetBreakdown = newDamageBreakdown()
 				}
-				
-				if isOvershieldOverflow {
-					targetBreakdown.OvershieldProvided += sub.HealingAmount
-				} else {
-					a.updateBreakdown(&targetBreakdown, tempHealPacket, attackSkillId, false)
-				}
+				a.updateBreakdown(&targetBreakdown, tempHealPacket, attackSkillId, false)
 				stats.HealingByTarget[targetIdStr] = targetBreakdown
 			}
 		}
