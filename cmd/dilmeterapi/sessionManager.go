@@ -198,7 +198,7 @@ func (sm *SessionManager) SaveLiveSession(name string) error {
 				ArcanaName:  pstat.TalentName,
 				ArcanaIcon:  "", // Omit from disk serialization (omitempty)
 				TotalDamage: pstat.OverallStats.TotalDamage,
-				OverallHealing: pstat.Overallhealing,
+				OverallHealing: pstat.OverallHealing,
 				HealingByTarget: pstat.HealingByTarget,
 			})
 			for tID, tBreakdown := range pstat.DamageByTarget {
