@@ -164,14 +164,14 @@ export default defineComponent({
       if (num >= 1_000) return (num / 1_000).toFixed(0) + "k";
       return Math.round(num).toLocaleString("en-US");
     };
-
+    
     const currentEncounterDuration = computed(() => {
-      return fightSummary.value?.encounterDuration || 0;
+      return fightSummary?.encounterDuration || 0;
     });
 
     const playerDisplayData = computed(() => {
-      if (!fightSummary.value?.players) return [];
-      return Object.values(fightSummary.value.players)
+      if (!fightSummary?.players) return [];
+      return Object.values(fightSummary.players)
         .map((p: any) => ({
           id: p.id,
           name: p.name,
@@ -199,20 +199,22 @@ export default defineComponent({
       return Object.values(overallHealing.skills) as SkillStats[];
     };
 
-    // Goal 2 Stacked Dynamic Visual Rendering Rule Engine
+    // Goal 2: Stacked Progress Bar Color Engine (Deep Burgundy + Neon Green)
     const getRowProps = ({ item }: { item: any }) => {
-      const topPlayer = playerDisplayData.value[0];
-      const maxPool = (topPlayer?.overallHealing?.totalDamage || 0) + (topPlayer?.overallHealing?.overshieldProvided || 0);
+      const players = playerDisplayData.value;
+      if (!players || players.length === 0) return { class: "character-row" };
+      
+      // Calculate scaling relative to the absolute top support throughput player
+      const topHealer = players[0];
+      const maxPool = (topHealer.overallHealing?.totalDamage || 0) + (topHealer.overallHealing?.overshieldProvided || 0);
       if (maxPool <= 0) return { class: "character-row" };
 
       const activeHeals = item.overallHealing?.totalDamage || 0;
       const shields = item.overallHealing?.overshieldProvided || 0;
 
-      // Map scale factors to fit row bounding box limits
       const healPercentage = (activeHeals / maxPool) * 100;
       const shieldPercentage = (shields / maxPool) * 100;
 
-      // Custom Colors: Deep Burgundy Backdrop layered with Neon Green extension strings
       return {
         class: "character-row",
         style: {
@@ -226,7 +228,7 @@ export default defineComponent({
         }
       };
     };
-
+    
     return {
       expanded,
       mainTableHeaders,
