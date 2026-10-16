@@ -723,92 +723,63 @@ func (a *Aggregator) processCombatAction(p *packet.GamePacket) {
 				attackSkillId == 35121                      // Spirit Healing Wand Awakening Alternate
 			
 			// ROUTE A: Support Healing Done tracking pipeline triggers if a support action is detected
-			if isSupportHealSkill {
-				if playerInfo, isCasterPlayer := playerCache.Get(casterID); isCasterPlayer {
-					stats := a.getOrCreatePlayerStats(playerInfo)
-					targetIdStr := strconv.FormatUint(sub.EntityId, 10)
-					
-					// Initialize raw baseline packet placeholder using valid colon mapping assignments
-					tempHealPacket := &packet.CombatActionPacket{
-						Hit: &packet.CombatActionPacketHitInfo{
-							Damage:  sub.Hit.Damage,
-							Options: sub.Hit.Options,
-						},
-					}
+					if sub.IsHealingSkill && isTargetAPlayer && sub.HealingAmount > 0 {
+			if playerInfo, isCasterPlayer := playerCache.Get(casterID); isCasterPlayer {
+				stats := a.getOrCreatePlayerStats(playerInfo)
+				targetIdStr := strconv.FormatUint(sub.EntityId, 10)
+				
+				// Standardize health checks across both teammates and self-targeting routines
+				var currentHp, maxHp float32
+				isOvershieldOverflow := false
 
-										// Fetch dynamic active health layers natively from Midir's entity state engine
-					if entityState, isCached := a.entityCache[sub.EntityId]; isCached && entityState.MaxHP > 0 {
-						
-						// Identify if an overshield buffer is actively present on the target teammate
-						hasOvershieldBuffer := entityState.AdditionalHP > 0
-						
-						var effectiveHeal float32 = 0
-						var overshieldOverflow float32 = 0
-
-						if hasOvershieldBuffer || entityState.CurrentHP >= (entityState.MaxHP - entityState.AdditionalHP) {
-							// If the player's raw health is already topped off, the entire hit generates overshield value!
-							effectiveHeal = 0
-							overshieldOverflow = sub.Hit.Damage
-						} else {
-							// Target has room for standard healing points. Calculate the exact deficit before shields apply.
-							trueHealthCeiling := entityState.MaxHP - entityState.AdditionalHP
-							missingHP := trueHealthCeiling - entityState.CurrentHP
-							if missingHP < 0 {
-								missingHP = 0
-							}
-
-							if sub.Hit.Damage > missingHP {
-								effectiveHeal = missingHP
-								overshieldOverflow = sub.Hit.Damage - missingHP
-							} else {
-								effectiveHeal = sub.Hit.Damage
-								overshieldOverflow = 0
-							}
-						}
-
-						// 1. Process and record the effective health recovery portion
-						if effectiveHeal > 0 {
-							tempEffectivePacket := &packet.CombatActionPacket{
-								Hit: &packet.CombatActionPacketHitInfo{
-									Damage:  effectiveHeal,
-									Options: sub.Hit.Options,
-								},
-							}
-							a.updateBreakdown(&stats.OverallHealing, tempEffectivePacket, attackSkillId, false)
-							
-							targetBreakdown, exists := stats.HealingByTarget[targetIdStr]
-							if !exists {
-								targetBreakdown = newDamageBreakdown()
-							}
-							a.updateBreakdown(&targetBreakdown, tempEffectivePacket, attackSkillId, false)
-							stats.HealingByTarget[targetIdStr] = targetBreakdown
-						}
-
-						// 2. Process and record the overshield points straight to your Neon Green bars
-						if overshieldOverflow > 0 {
-							stats.OverallHealing.OvershieldProvided += overshieldOverflow
-							
-							targetBreakdown, exists := stats.HealingByTarget[targetIdStr]
-							if !exists {
-								targetBreakdown = newDamageBreakdown()
-							}
-							targetBreakdown.OvershieldProvided += overshieldOverflow
-							stats.HealingByTarget[targetIdStr] = targetBreakdown
-						}
-
-					} else {
-						// Fallback Gate: If player state is uncached or uninitialized, log the full hit as baseline healing
-						a.updateBreakdown(&stats.OverallHealing, tempHealPacket, attackSkillId, false)
-						
-						targetBreakdown, exists := stats.HealingByTarget[targetIdStr]
-						if !exists {
-							targetBreakdown = newDamageBreakdown()
-						}
-						a.updateBreakdown(&targetBreakdown, tempHealPacket, attackSkillId, false)
-						stats.HealingByTarget[targetIdStr] = targetBreakdown
-					}
+				if targetEntity, exists := a.entityCache[sub.EntityId]; exists {
+					currentHp = targetEntity.CurrentHP
+					maxHp = targetEntity.MaxHP
+					isOvershieldOverflow = currentHp >= maxHp && maxHp > 0
+				} else if targetPl, exists := playerCache.Get(sub.EntityId); exists {
+					// Fallback lookup: route through player profiles natively
+					_ = targetPl
+					isOvershieldOverflow = true // Treat untracked player targets at max capacity safely
 				}
+
+				tempHealPacket := &packet.CombatActionPacket{
+					Hit: &packet.CombatActionPacketHitInfo{
+						Damage:  sub.HealingAmount,
+						Options: sub.Hit.Options,
+					},
+				}
+				
+				// Append numbers smoothly to both raw healing counters and active overshield collectors
+				if isOvershieldOverflow {
+					stats.OvershieldProvided += sub.HealingAmount
+				} else {
+					a.updateBreakdown(&stats.OverallHealing, tempHealPacket, attackSkillId, false)
+				}
+				
+				healStats, exists := stats.HealingSkills[attackSkillId]
+				if !exists {
+					healStats = SkillStats{}
+				}
+				healStats.TotalDamage += sub.HealingAmount
+				healStats.Count++
+				if (sub.Hit.Options & packet.CombatActionHitOptionsCritical) != 0 {
+					healStats.CritCount++
+				}
+				stats.HealingSkills[attackSkillId] = healStats
+				
+				targetBreakdown, exists := stats.HealingByTarget[targetIdStr]
+				if !exists {
+					targetBreakdown = newDamageBreakdown()
+				}
+				
+				if isOvershieldOverflow {
+					targetBreakdown.OvershieldProvided += sub.HealingAmount
+				} else {
+					a.updateBreakdown(&targetBreakdown, tempHealPacket, attackSkillId, false)
+				}
+				stats.HealingByTarget[targetIdStr] = targetBreakdown
 			}
+		}
 		} else if sub.Hit.Damage > 0 {
 			// ROUTE B: Standard offensive damage dealt to a boss/enemy
 			if playerInfo, isPlayer := playerCache.Get(attackerId); isPlayer {
