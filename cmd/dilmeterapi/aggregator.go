@@ -704,7 +704,8 @@ func (a *Aggregator) processCombatAction(p *packet.GamePacket) {
 				attackSkillId == 35121                      // Spirit Healing Wand Awakening Alternate
 			
 			// ROUTE A: Support Healing Done tracking pipeline
-			if playerInfo, isCasterPlayer := playerCache.Get(casterID); isCasterPlayer {
+			if isSupportHealSkill {
+				if playerInfo, isCasterPlayer := playerCache.Get(casterID); isCasterPlayer {
 				stats := a.getOrCreatePlayerStats(playerInfo)
 				targetIdStr := strconv.FormatUint(sub.EntityId, 10)
 				
