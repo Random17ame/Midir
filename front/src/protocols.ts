@@ -5,6 +5,7 @@ export interface SkillStats {
   count: number;
   critCount: number;
   totalDamage: number;
+  overshieldProvided?: number;
   totalDamageCrit: number;
   totalDamageNonCrit: number;
   maxDamage: number;
