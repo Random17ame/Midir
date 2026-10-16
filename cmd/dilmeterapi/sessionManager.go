@@ -189,6 +189,7 @@ func (sm *SessionManager) SaveLiveSession(name string) error {
 	if err == nil && summary != nil {
 		summaryData.Duration = summary.EncounterDuration
 		summaryData.TotalDamage = summary.TotalDamage
+		summaryData.TotalHealing = totalPartyHealing
 
 		targetDamageMap := make(map[string]float32)
 		var totalPartyHealing float32 = 0 // Injected to accumulate total party healing
@@ -693,7 +694,6 @@ func (sm *SessionManager) MigrateSession(sessionID string) error {
 
 	summaryData.Duration = summary.EncounterDuration
 	summaryData.TotalDamage = summary.TotalDamage
-	summaryData.TotalHealing = totalPartyHealing
 	
 	targetDamageMap := make(map[string]float32)
 
