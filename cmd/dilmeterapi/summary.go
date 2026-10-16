@@ -96,7 +96,9 @@ type PlayerStats struct {
 	MissingAppearPacket bool                       `json:"missingAppearPacket"` // NEW: True if we haven't seen an appear packet (cache warning)
 	OverallStats        DamageBreakdown            `json:"overallStats"`
 	OverallHealing      DamageBreakdown            `json:"overallHealing"`
+	OvershieldProvided  float32                    `json:"overshieldProvided"`
 	HealingByTarget     map[string]DamageBreakdown `json:"healingByTarget"`
+	HealingSkills       map[uint16]SkillsStats     `json:"healingSkills"`
 	DamageByTarget      map[string]DamageBreakdown `json:"damageByTarget"` // Key is Target ID
 	SkillUses           []SkillUseEvent            `json:"-"`
 	Deaths              []int64                    `json:"deaths,omitempty"`
