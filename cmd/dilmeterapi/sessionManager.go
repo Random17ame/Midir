@@ -189,26 +189,37 @@ func (sm *SessionManager) SaveLiveSession(name string) error {
 	if err == nil && summary != nil {
 		summaryData.Duration = summary.EncounterDuration
 		summaryData.TotalDamage = summary.TotalDamage
-		summaryData.TotalHealing = totalPartyHealing
 
-		targetDamageMap := make(map[string]float32)
-		var totalPartyHealing float32 = 0 // Injected to accumulate total party healing
+			// Initialize your aggregate parameter variables at the very beginning of the function scope
+	targetDamageMap := make(map[string]float32)
+	var totalPartyHealing float32 = 0 
+
+	if summary != nil {
+		summaryData.Duration = summary.EncounterDuration
+		summaryData.TotalDamage = summary.TotalDamage
 
 		for _, pstat := range summary.Players {
 			summaryData.Players = append(summaryData.Players, SessionSummaryPlayer{
-				Name:        pstat.Name,
-				DPS:         pstat.OverallStats.DPS,
-				ArcanaName:  pstat.TalentName,
-				ArcanaIcon:  "", // Omit from disk serialization (omitempty)
-				TotalDamage: pstat.OverallStats.TotalDamage,
-				OverallHealing: pstat.OverallHealing,
+				Name:            pstat.Name,
+				DPS:             pstat.OverallStats.DPS,
+				ArcanaName:      pstat.TalentName,
+				ArcanaIcon:      "", 
+				TotalDamage:     pstat.OverallStats.TotalDamage,
+				OverallHealing:  pstat.OverallHealing,
 				HealingByTarget: pstat.HealingByTarget,
 			})
+			
+			// Accumulate raw player healing into the unified party pool sum safely
 			totalPartyHealing += pstat.OverallHealing.TotalDamage
+
 			for tID, tBreakdown := range pstat.DamageByTarget {
 				targetDamageMap[tID] += tBreakdown.TotalDamage
-				}
+			}
 		}
+		
+		// Map the finalized accumulation down to your summary structures
+		summaryData.TotalHealing = totalPartyHealing
+	}
 		sort.Slice(summaryData.Players, func(i, j int) bool {
 			return summaryData.Players[i].TotalDamage > summaryData.Players[j].TotalDamage
 		})
