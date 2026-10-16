@@ -63,6 +63,7 @@ type SkillStats struct {
 	MaxDamage          float32 `json:"maxDamage"`
 	MaxDamageCrit      float32 `json:"maxDamageCrit"`
 	MaxDamageNonCrit   float32 `json:"maxDamageNonCrit"`
+	OvershieldProvided float32 `json:"overshieldProvided"`
 	Uses               int     `json:"uses"` // New skill usage count
 }
 
