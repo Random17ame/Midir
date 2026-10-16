@@ -671,14 +671,47 @@ func (a *Aggregator) processCombatAction(p *packet.GamePacket) {
 			sub.Hit.ManaDamage = 0
 		}
 
-		if sub.Hit == nil || (sub.Hit.Damage <= 0 && sub.Hit.ManaDamage <= 0) {
-			continue
-		}
-		// Update the shared timers for this target, regardless of who hit it
-		a.updateTimestamps(sub.EntityId, p.At)
+		// Check if the entity RECEIVING the packet is a Player Character (Support Mode)
+		targetPlayer, isTargetAPlayer := playerCache.Get(sub.EntityId)
 
-		// If the attacker is a player, update their damage dealt stats
-		if sub.Hit.Damage > 0 {
+		if sub.IsHealingSkill && isTargetAPlayer && sub.HealingAmount > 0 {
+			// ROUTE A: Support Healing & Overshield Pipeline
+			if playerInfo, isCasterPlayer := playerCache.Get(casterID); isCasterPlayer {
+				stats := a.getOrCreatePlayerStats(playerInfo)
+				targetIdStr := strconv.FormatUint(sub.EntityId, 10)
+				
+				tempHealPacket := &packet.CombatActionPacket{
+					Hit: &packet.CombatActionPacketHitInfo{
+						Damage:  sub.HealingAmount,
+						Options: sub.Hit.Options,
+					},
+				}
+				
+		// Goal 2 Evaluation Rule: Identify if target teammate's HP was already full when hit
+				isOvershieldOverflow := targetPlayer.CurrentHP >= targetPlayer.MaxHP
+
+				if isOvershieldOverflow {
+					// Separate and log overflow points straight to your custom shield property
+					stats.OverallHealing.OvershieldProvided += sub.HealingAmount
+				} else {
+					// Route standard effective health recovery to the primary tab array
+					a.updateBreakdown(&stats.OverallHealing, tempHealPacket, attackSkillId, false)
+				}
+				// Map numbers back to individual sub-targets per player
+				targetBreakdown, exists := stats.HealingByTarget[targetIdStr]
+				if !exists {
+					targetBreakdown = newDamageBreakdown()
+				}
+				if isOvershieldOverflow {
+					targetBreakdown.OvershieldProvided += sub.HealingAmount
+				} else {
+					a.updateBreakdown(&targetBreakdown, tempHealPacket, attackSkillId, false)
+				}
+				stats.HealingByTarget[targetIdStr] = targetBreakdown
+				stats.HealingByTarget[targetIdStr] = targetBreakdown
+			}
+		} else if sub.Hit != nil && sub.Hit.Damage > 0 {
+			// ROUTE B: Standard offensive damage dealt to a boss/enemy
 			if playerInfo, isPlayer := playerCache.Get(attackerId); isPlayer {
 				stats := a.getOrCreatePlayerStats(playerInfo)
 				a.updateBreakdown(&stats.OverallStats, sub, attackSkillId, false)
