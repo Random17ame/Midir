@@ -13,7 +13,7 @@
     :items-per-page="-1"
     hide-default-footer
   >
-    <!-- Character Row Names -->
+    <!-- Character Rows -->
     <template v-slot:[`item.name`]="{ item }">
       <div class="d-flex align-center font-weight-bold py-1">
         <v-btn
@@ -32,38 +32,36 @@
       </div>
     </template>
 
-    <!-- Effective Healing Output Cell -->
+    <!-- Effective Heals -->
     <template v-slot:[`item.overallHealing.totalDamage`]="{ item }">
       <div class="text-right font-weight-bold">
         {{ formatAbbreviated(item.overallHealing?.totalDamage) }}
         <span class="text-grey font-weight-medium text-caption ml-1">
-          ({{ totalHealingForView > 0 ? ((item.overallHealing?.totalDamage / totalHealingForView) * 100).toFixed(1) : '0.0' }}%)
+          ({{ totalHealingForView > 0 ? (((item.overallHealing?.totalDamage || 0) / totalHealingForView) * 100).toFixed(1) : '0.0' }}%)
         </span>
       </div>
     </template>
 
-    <!-- Healing Per Second (HPS) Cell -->
     <template v-slot:[`item.overallHealing.dps`]="{ item }">
       <div class="text-right font-weight-bold">
         {{ formatNumber(item.overallHealing?.dps) }} HPS
       </div>
     </template>
 
-    <!-- Overshield Volume Output Cell (Goal 2 Counter) -->
+    <!-- Overshield Volume Column Row Display -->
     <template v-slot:[`item.overallHealing.overshieldProvided`]="{ item }">
       <div class="text-right font-weight-bold text-light-green-accent-3">
         {{ formatAbbreviated(item.overallHealing?.overshieldProvided || 0) }}
       </div>
     </template>
 
-    <!-- Critical Heal Percentage Rate Cell -->
     <template v-slot:[`item.overallHealing.critRate`]="{ item }">
       <div class="text-center font-weight-bold text-amber">
         {{ (item.overallHealing?.critRate || 0).toFixed(1) }}%
       </div>
     </template>
 
-    <!-- Skill Breakdown Expanded Sub-Table Grid -->
+    <!-- Expanded Skills Dropdown Section -->
     <template v-slot:expanded-row="{ columns, item }">
       <tr>
         <td :colspan="columns.length">
@@ -74,11 +72,9 @@
             :items-per-page="-1"
             hide-default-footer
             class="ma-2 bg-surface-variant rounded-sm elevation-0"
-            :row-props="(skillItem) => getSkillRowProps(skillItem, item.overallHealing?.skills?.[0]?.totalDamage, item.name, item)"
           >
-            <!-- Nested Skill Identifier Rows -->
             <template v-slot:[`item.skillName`]="{ item: skillItem }">
-              <div class="d-flex align-center px-2 py-1 skill-bar-cell">
+              <div class="d-flex align-center px-2 py-1">
                 <img
                   v-if="getSkillImageSrc(skillItem.id)"
                   width="24"
@@ -86,7 +82,7 @@
                   :src="getSkillImageSrc(skillItem.id)"
                   class="mr-2 rounded-sm"
                   @error="($event.target as HTMLImageElement).style.display = 'none'"
-                >
+                />
                 <span class="font-weight-bold text-body-2">{{ getSkillName(skillItem.id) }}</span>
               </div>
             </template>
@@ -96,9 +92,7 @@
             </template>
 
             <template v-slot:[`item.totalDamage`]="{ item: skillItem }">
-              <div class="text-right font-weight-bold">
-                {{ formatNumber(skillItem.totalDamage) }}
-              </div>
+              <div class="text-right font-weight-bold">{{ formatNumber(skillItem.totalDamage) }}</div>
             </template>
 
             <template v-slot:[`item.dps`]="{ item: skillItem }">
@@ -124,56 +118,39 @@
     </template>
   </v-data-table>
 </template>
+
 <script lang="ts">
 import { defineComponent, ref, computed, inject, watch } from "vue";
-import { fightSummary, activeSessionId, selectedTargetId, hiddenPlayers } from "@/store";
+import { fightSummary, activeSessionId, selectedTargetId, hiddenPlayers, globalHideMode } from "@/store";
 import { DamageBreakdown, SkillStats } from "@/protocols";
 import { isGroupTargetId, getGroupMemberTargetIds, getEncounterDurationForTargets } from "@/utils/targetGrouping";
-import { getMabiNameColor, getClassColor } from "@/util";
-import { toggleHiddenPlayer, globalHideMode, showClassColorsForVisiblePlayers } from "@/store";
+import { toggleHiddenPlayer } from "@/store";
 
 export default defineComponent({
   name: "ApplyHealingBySkill",
-  props: {
-    attackerNameMap: {
-      type: Object as () => { [id: string]: string },
-      required: false,
-    },
-  },
-  setup(props) {
+  setup() {
     const skillNameMap = inject("skillNameMap") as any;
-    const condNameMap = inject("condNameMap") as any;
     const expanded = ref<string[]>([]);
-    const viewMode = ref<"table">("table");
 
-    watch(activeSessionId, () => {
-      expanded.value = [];
-    });
+    watch(activeSessionId, () => { expanded.value = []; });
 
-    const getPlayerColor = (item: any) => {
-      const isHidden = globalHideMode.value || hiddenPlayers.has(item.id);
-      const shouldUseClassColor = isHidden || showClassColorsForVisiblePlayers.value;
-      return shouldUseClassColor
-        ? getClassColor(item.talentName, item.talentColor)
-        : getMabiNameColor(item.name);
-    };
     const mainTableHeaders = computed(() => [
       { title: "Hide", key: "isHidden", sortable: false, width: "1%" },
       { title: "Character", key: "name", sortable: true, width: "20%" },
-      { title: "Healing Contribution", key: "overallHealing.totalDamage", sortable: true, align: "end", width: "35%" },
-      { title: "HPS", key: "overallHealing.dps", sortable: true, align: "end", width: "20%" },
-      { title: "Overshields Provided", key: "overallHealing.overshieldProvided", sortable: true, align: "end", width: "20%" },
-      { title: "Crit %", key: "overallHealing.critRate", sortable: true, align: "center", width: "15%" },
+      { title: "Healing Contribution", key: "overallHealing.totalDamage", sortable: true, align: "end" as const, width: "35%" },
+      { title: "HPS", key: "overallHealing.dps", sortable: true, align: "end" as const, width: "20%" },
+      { title: "Overshields Provided", key: "overallHealing.overshieldProvided", sortable: true, align: "end" as const, width: "20%" },
+      { title: "Crit %", key: "overallHealing.critRate", sortable: true, align: "center" as const, width: "15%" },
       { title: "", key: "data-table-expand", width: "4%" },
-    ] as const);
+    ]);
 
     const computedSkillTableHeaders = computed(() => [
       { title: "Skill", key: "skillName", sortable: true, width: "200px" },
-      { title: "Uses", key: "uses", sortable: true, align: "end" },
-      { title: "Total Healed", key: "totalDamage", sortable: true, align: "end" },
-      { title: "HPS", key: "dps", sortable: true, align: "end" },
-      { title: "Overshield", key: "overshieldProvided", sortable: true, align: "end" },
-      { title: "Crit %", key: "critRate", sortable: true, align: "center" }
+      { title: "Uses", key: "uses", sortable: true, align: "end" as const },
+      { title: "Total Healed", key: "totalDamage", sortable: true, align: "end" as const },
+      { title: "HPS", key: "dps", sortable: true, align: "end" as const },
+      { title: "Overshield", key: "overshieldProvided", sortable: true, align: "end" as const },
+      { title: "Crit %", key: "critRate", sortable: true, align: "center" as const }
     ]);
 
     const formatNumber = (num: number | undefined | null): string => {
@@ -187,25 +164,34 @@ export default defineComponent({
       if (num >= 1_000) return (num / 1_000).toFixed(0) + "k";
       return Math.round(num).toLocaleString("en-US");
     };
+
     const currentEncounterDuration = computed(() => {
-      // Logic for calculating encounter duration based on targets and fight summary
+      return fightSummary.value?.encounterDuration || 0;
     });
 
     const playerDisplayData = computed(() => {
-      // Maps, groups, filters, and sorts player display data and healing breakdowns
+      if (!fightSummary.value?.players) return [];
+      return Object.values(fightSummary.value.players)
+        .map((p: any) => ({
+          id: p.id,
+          name: p.name,
+          overallHealing: p.overallHealing || { totalDamage: 0, dps: 0, overshieldProvided: 0, critRate: 0, skills: {} }
+        }))
+        .filter((p: any) => p.overallHealing.totalDamage > 0 || p.overallHealing.overshieldProvided > 0)
+        .sort((a: any, b: any) => b.overallHealing.totalDamage - a.overallHealing.totalDamage);
     });
 
     const totalHealingForView = computed(() => {
-      return playerDisplayData.value.reduce((sum, p) => sum + (p.overallHealing?.totalDamage || 0), 0);
+      return playerDisplayData.value.reduce((sum: number, p: any) => sum + (p.overallHealing?.totalDamage || 0), 0);
     });
 
     const getSkillName = (skillId: number): string => {
       if (skillId === 9999) return "Pets";
-      return skillNameMap.value[skillId]?.name || `Unknown Skill: ${skillId}`;
+      return skillNameMap.value?.[skillId]?.name || `Unknown Skill: ${skillId}`;
     };
 
     const getSkillImageSrc = (skillId: number): string => {
-      return skillNameMap.value[skillId]?.iconUrl || "";
+      return skillNameMap.value?.[skillId]?.iconUrl || "";
     };
 
     const getSkillBreakdown = (overallHealing: any): SkillStats[] => {
@@ -213,17 +199,36 @@ export default defineComponent({
       return Object.values(overallHealing.skills) as SkillStats[];
     };
 
+    // Goal 2 Stacked Dynamic Visual Rendering Rule Engine
     const getRowProps = ({ item }: { item: any }) => {
-      // Generates row background gradients and border styles for visual charts
-    };
+      const topPlayer = playerDisplayData.value[0];
+      const maxPool = (topPlayer?.overallHealing?.totalDamage || 0) + (topPlayer?.overallHealing?.overshieldProvided || 0);
+      if (maxPool <= 0) return { class: "character-row" };
 
-    const getSkillRowProps = (skillItem: any, totalDamage: number, playerName: string, parentItem: any) => {
-      return { class: "skill-row" };
+      const activeHeals = item.overallHealing?.totalDamage || 0;
+      const shields = item.overallHealing?.overshieldProvided || 0;
+
+      // Map scale factors to fit row bounding box limits
+      const healPercentage = (activeHeals / maxPool) * 100;
+      const shieldPercentage = (shields / maxPool) * 100;
+
+      // Custom Colors: Deep Burgundy Backdrop layered with Neon Green extension strings
+      return {
+        class: "character-row",
+        style: {
+          background: `linear-gradient(to right, 
+            rgba(89, 38, 38, 0.85) 0%, 
+            rgba(89, 38, 38, 0.85) ${healPercentage}%, 
+            rgba(57, 255, 20, 0.85) ${healPercentage}%, 
+            rgba(57, 255, 20, 0.85) ${healPercentage + shieldPercentage}%, 
+            transparent ${healPercentage + shieldPercentage}% 100%)`,
+          backgroundClip: 'padding-box'
+        }
+      };
     };
 
     return {
       expanded,
-      viewMode,
       mainTableHeaders,
       computedSkillTableHeaders,
       playerDisplayData,
@@ -235,69 +240,51 @@ export default defineComponent({
       getSkillImageSrc,
       getSkillBreakdown,
       getRowProps,
-      getSkillRowProps,
       toggleHiddenPlayer,
       hiddenPlayers,
     };
   }
 });
 </script>
+
 <style scoped>
-.pb-16 {
-  padding-bottom: 80px !important;
+.pb-16 { 
+  padding-bottom: 80px !important; 
 }
 
-:deep(.v-data-table) {
-  background: transparent !important;
+:deep(.v-data-table) { 
+  background: transparent !important; 
 }
 
-.dps-table :deep(table) {
-  border-spacing: 0 6px !important;
-  border-collapse: separate !important;
+.dps-table :deep(table) { 
+  border-spacing: 0 6px !important; 
+  border-collapse: separate !important; 
 }
 
-.dps-table :deep(tbody tr.character-row) {
-  position: relative;
-  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+.dps-table :deep(tbody tr.character-row) { 
+  position: relative; 
+  transition: all 0.2s ease; 
 }
 
-.dps-table :deep(tbody tr.character-row:hover) {
-  filter: brightness(1.1);
-  transform: translateY(-1px);
-  z-index: 1;
+.dps-table :deep(td) { 
+  border-bottom: none !important; 
+  padding-top: 4px !important; 
+  padding-bottom: 4px !important; 
+  background-color: rgba(255, 255, 255, 0.03); 
 }
 
-.dps-table :deep(tbody tr:not(.character-row):hover) {
-  filter: none !important;
-  transform: none !important;
+.dps-table :deep(tbody tr) { 
+  border-radius: 6px !important; 
 }
 
-.dps-table :deep(td) {
-  border-bottom: none !important;
-  padding-top: 4px !important;
-  padding-bottom: 4px !important;
-  background-color: rgba(255, 255, 255, 0.03);
+.dps-table :deep(tbody tr td:first-child) { 
+  border-top-left-radius: 6px !important; 
+  border-bottom-left-radius: 6px !important; 
 }
 
-.dps-table :deep(tbody tr) {
-  border-radius: 6px !important;
-}
-
-.dps-table :deep(tbody tr td:first-child) {
-  border-top-left-radius: 6px !important;
-  border-bottom-left-radius: 6px !important;
-}
-
-.dps-table :deep(tbody tr td:last-child) {
-  border-top-right-radius: 6px !important;
-  border-bottom-right-radius: 6px !important;
-}
-
-.skill-bar-cell {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  width: 100%;
+.dps-table :deep(tbody tr td:last-child) { 
+  border-top-right-radius: 6px !important; 
+  border-bottom-right-radius: 6px !important; 
 }
 </style>
 
