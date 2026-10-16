@@ -723,6 +723,7 @@ func (sm *SessionManager) MigrateSession(sessionID string) error {
 		for tID, tBreakdown := range pstat.DamageByTarget {
 			targetDamageMap[tID] += tBreakdown.TotalDamage
 		}
+		summaryData.TotalHealing = totalPartyHealing
 	}
 	
 	sort.Slice(summaryData.Players, func(i, j int) bool {
