@@ -206,9 +206,7 @@ func (sm *SessionManager) SaveLiveSession(name string) error {
 				targetDamageMap[tID] += tBreakdown.TotalDamage
 				}
 				totalPartyHealing += pstat.OverallHealing.TotalDamage
-				}
 		}
-
 		sort.Slice(summaryData.Players, func(i, j int) bool {
 			return summaryData.Players[i].TotalDamage > summaryData.Players[j].TotalDamage
 		})
