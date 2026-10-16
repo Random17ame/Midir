@@ -207,9 +207,10 @@ func (sm *SessionManager) SaveLiveSession(name string) error {
 			// Map support targets to retain names across saved sessions
 			for tIDStr, hBreakdown := range pstat.HealingByTarget {
 				tIDUint, _ := strconv.ParseUint(tIDStr, 10, 64)
-				if name, ok := a.targetNames[tIDUint]; ok {
-					a.targetNames[tIDUint] = name
+				if name, ok := sm.targetNames[tIDUint]; ok {
+					sm.targetNames[tIDUint] = name
 					}
+				_ = hBreakdown
 				}
 		}
 
