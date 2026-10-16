@@ -671,46 +671,49 @@ func (a *Aggregator) processCombatAction(p *packet.GamePacket) {
 			sub.Hit.ManaDamage = 0
 		}
 
-		// Check if the entity RECEIVING the packet is a Player Character (Support Mode)
-		targetPlayer, isTargetAPlayer := playerCache.Get(sub.EntityId)
+				// Optimization Rule: Revert safety gate to let standard combat subpackets pass cleanly
+		if sub.Hit == nil || (sub.Hit.Damage  0 {
+			casterID = sub.Hit.AttackerId
+		}
 
-		if sub.IsHealingSkill && isTargetAPlayer && sub.HealingAmount > 0 {
-			// ROUTE A: Support Healing & Overshield Pipeline
+		// Check if the entity RECEIVING the packet is a Player Character (Support Mode)
+		if targetInfo, isTargetAPlayer := playerCache.Get(sub.EntityId); isTargetAPlayer {
+			// ROUTE A: Support Healing Done tracking pipeline
 			if playerInfo, isCasterPlayer := playerCache.Get(casterID); isCasterPlayer {
 				stats := a.getOrCreatePlayerStats(playerInfo)
 				targetIdStr := strconv.FormatUint(sub.EntityId, 10)
 				
 				tempHealPacket := &packet.CombatActionPacket{
 					Hit: &packet.CombatActionPacketHitInfo{
-						Damage:  sub.HealingAmount,
+						Damage:  sub.Hit.Damage,
 						Options: sub.Hit.Options,
 					},
 				}
 				
-		// Goal 2 Evaluation Rule: Identify if target teammate's HP was already full when hit
-				isOvershieldOverflow := targetPlayer.CurrentHP >= targetPlayer.MaxHP
-
-				if isOvershieldOverflow {
+				// Fetch dynamic active health layers natively from Midir's entity state engine
+				if entityState, isCached := a.entityCache[sub.EntityId]; isCached && entityState.CurrentHP >= entityState.MaxHP {
 					// Separate and log overflow points straight to your custom shield property
-					stats.OverallHealing.OvershieldProvided += sub.HealingAmount
+					stats.OverallHealing.OvershieldProvided += sub.Hit.Damage
+					
+					targetBreakdown, exists := stats.HealingByTarget[targetIdStr]
+					if !exists {
+						targetBreakdown = newDamageBreakdown()
+					}
+					targetBreakdown.OvershieldProvided += sub.Hit.Damage
+					stats.HealingByTarget[targetIdStr] = targetBreakdown
 				} else {
-					// Route standard effective health recovery to the primary tab array
+					// Route standard effective health recovery to the primary tab arrays
 					a.updateBreakdown(&stats.OverallHealing, tempHealPacket, attackSkillId, false)
-				}
-				// Map numbers back to individual sub-targets per player
-				targetBreakdown, exists := stats.HealingByTarget[targetIdStr]
-				if !exists {
-					targetBreakdown = newDamageBreakdown()
-				}
-				if isOvershieldOverflow {
-					targetBreakdown.OvershieldProvided += sub.HealingAmount
-				} else {
+					
+					targetBreakdown, exists := stats.HealingByTarget[targetIdStr]
+					if !exists {
+						targetBreakdown = newDamageBreakdown()
+					}
 					a.updateBreakdown(&targetBreakdown, tempHealPacket, attackSkillId, false)
+					stats.HealingByTarget[targetIdStr] = targetBreakdown
 				}
-				stats.HealingByTarget[targetIdStr] = targetBreakdown
-				stats.HealingByTarget[targetIdStr] = targetBreakdown
 			}
-		} else if sub.Hit != nil && sub.Hit.Damage > 0 {
+		} else if sub.Hit.Damage > 0 {
 			// ROUTE B: Standard offensive damage dealt to a boss/enemy
 			if playerInfo, isPlayer := playerCache.Get(attackerId); isPlayer {
 				stats := a.getOrCreatePlayerStats(playerInfo)
@@ -719,7 +722,6 @@ func (a *Aggregator) processCombatAction(p *packet.GamePacket) {
 				a.updatePerTargetBreakdown(stats, targetIdStr, sub, attackSkillId, false)
 			}
 		}
-
 		// If the target is a player, update their damage taken stats
 		if targetInfo, isPlayerTarget := playerCache.Get(sub.EntityId); isPlayerTarget {
 			a.updateDamageTaken(targetInfo, attackerId, attackSkillId, sub.Hit.Damage, float32(sub.Hit.ManaDamage))
