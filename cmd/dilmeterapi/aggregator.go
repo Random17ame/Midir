@@ -879,12 +879,17 @@ func (a *Aggregator) GetSummary() FightSummary {
 		playerCopy.OverallStats.StartTime = a.encounterStartTime
 		playerCopy.OverallStats.EndTime = a.encounterEndTime
 
-		// Finalize per-target stats using the shared duration for each specific target
+		// Finalize overall healing tracking systems using core combat clocks
+		playerCopy.OverallHealing = a.finalizeBreakdown(pStats.OverallHealing, summary.EncounterDuration, a.encounterStartTime, a.encounterEndTime, playerID, true, 0)
+		playerCopy.OverallHealing.StartTime = a.encounterStartTime
+		playerCopy.OverallHealing.EndTime = a.encounterEndTime
+
+		// Finalize per-target damage stats using the shared duration for each specific target
 		for targetIdStr, breakdown := range pStats.DamageByTarget {
 			targetIdUint, _ := strconv.ParseUint(targetIdStr, 10, 64)
 			targetTimes := a.targetTimestamps[targetIdUint]
 			targetDuration := float64(targetTimes.EndTime - targetTimes.StartTime)
-
+			
 			finalizedBreakdown := a.finalizeBreakdown(breakdown, targetDuration, targetTimes.StartTime, targetTimes.EndTime, playerID, false, targetIdUint)
 			finalizedBreakdown.StartTime = targetTimes.StartTime
 			finalizedBreakdown.EndTime = targetTimes.EndTime
@@ -892,10 +897,23 @@ func (a *Aggregator) GetSummary() FightSummary {
 			uniqueTargets[targetIdUint] = true
 		}
 
+		// Finalize per-target healing stats using the shared duration for each specific target
+		playerCopy.HealingByTarget = make(map[string]DamageBreakdown)
+		for targetIdStr, breakdown := range pStats.HealingByTarget {
+			targetIdUint, _ := strconv.ParseUint(targetIdStr, 10, 64)
+			targetTimes := a.targetTimestamps[targetIdUint]
+			targetDuration := float64(targetTimes.EndTime - targetTimes.StartTime)
+			
+			finalizedBreakdown := a.finalizeBreakdown(breakdown, targetDuration, targetTimes.StartTime, targetTimes.EndTime, playerID, false, targetIdUint)
+			finalizedBreakdown.StartTime = targetTimes.StartTime
+			finalizedBreakdown.EndTime = targetTimes.EndTime
+			playerCopy.HealingByTarget[targetIdStr] = finalizedBreakdown
+		}
+
 		summary.Players[pStats.ID] = playerCopy
 		totalDamage += playerCopy.OverallStats.TotalDamage
 	}
-
+	
 	summary.TotalDamage = totalDamage
 	for _, dtStats := range a.damageTaken {
 		summary.DamageTaken[dtStats.PlayerID] = *dtStats
