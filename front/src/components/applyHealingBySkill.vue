@@ -5,7 +5,7 @@
     item-value="id"
     expand-on-click
     :expanded="expanded"
-    @update:expanded="expanded = \$event"
+    @update:expanded="expanded = $event"
     class="elevation-1 pb-16 dps-table"
     :row-props="getRowProps"
     show-expand
@@ -85,8 +85,8 @@
                   height="24"
                   :src="getSkillImageSrc(skillItem.id)"
                   class="mr-2 rounded-sm"
-                  @error="(\$event.target as HTMLImageElement).style.display = 'none'"
-                />
+                  @error="($event.target as HTMLImageElement).style.display = 'none'"
+                >
                 <span class="font-weight-bold text-body-2">{{ getSkillName(skillItem.id) }}</span>
               </div>
             </template>
