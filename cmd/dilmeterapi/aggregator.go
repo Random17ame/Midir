@@ -737,45 +737,6 @@ func (a *Aggregator) processCombatAction(p *packet.GamePacket) {
 		}
 	}
 }			
-				// Fetch dynamic active health layers natively from Midir's entity state engine
-				if entityState, isCached := a.entityCache[sub.EntityId]; isCached && entityState.CurrentHP >= entityState.MaxHP {
-					// Separate and log overflow points straight to your custom shield property
-					stats.OverallHealing.OvershieldProvided += sub.Hit.Damage
-					
-					targetBreakdown, exists := stats.HealingByTarget[targetIdStr]
-					if !exists {
-						targetBreakdown = newDamageBreakdown()
-					}
-					targetBreakdown.OvershieldProvided += sub.Hit.Damage
-					stats.HealingByTarget[targetIdStr] = targetBreakdown
-				} else {
-					// Route standard effective health recovery to the primary tab arrays
-					a.updateBreakdown(&stats.OverallHealing, tempHealPacket, attackSkillId, false)
-					
-					targetBreakdown, exists := stats.HealingByTarget[targetIdStr]
-					if !exists {
-						targetBreakdown = newDamageBreakdown()
-					}
-					a.updateBreakdown(&targetBreakdown, tempHealPacket, attackSkillId, false)
-					stats.HealingByTarget[targetIdStr] = targetBreakdown
-				}
-			}
-		} else if sub.Hit.Damage > 0 {
-			// ROUTE B: Standard offensive damage dealt to a boss/enemy
-			if playerInfo, isPlayer := playerCache.Get(attackerId); isPlayer {
-				stats := a.getOrCreatePlayerStats(playerInfo)
-				a.updateBreakdown(&stats.OverallStats, sub, attackSkillId, false)
-				targetIdStr := strconv.FormatUint(sub.EntityId, 10)
-				a.updatePerTargetBreakdown(stats, targetIdStr, sub, attackSkillId, false)
-			}
-		}
-		// If the target is a player, update their damage taken stats
-		if targetInfo, isPlayerTarget := playerCache.Get(sub.EntityId); isPlayerTarget {
-			a.updateDamageTaken(targetInfo, attackerId, attackSkillId, sub.Hit.Damage, float32(sub.Hit.ManaDamage))
-		}
-	}
-}
-
 func (a *Aggregator) getOrCreatePlayerStats(playerInfo *PlayerInfo) *PlayerStats {
 	stats, exists := a.playerStats[playerInfo.ID]
 	if !exists {
