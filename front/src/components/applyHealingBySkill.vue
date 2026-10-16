@@ -175,7 +175,9 @@ export default defineComponent({
         .map((p: any) => ({
           id: p.id,
           name: p.name,
-          overallHealing: p.overallHealing || { totalDamage: 0, dps: 0, overshieldProvided: 0, critRate: 0, skills: {} }
+          // Optimization Gate: If it's a historical save missing healing metadata, fallback safely to 0 matrices
+          overallHealing: p.overallHealing || { totalDamage: 0, dps: 0, overshieldProvided: 0, critRate: 0, skills: {} },
+          healingByTarget: p.healingByTarget || {}
         }))
         .filter((p: any) => p.overallHealing.totalDamage > 0 || p.overallHealing.overshieldProvided > 0)
         .sort((a: any, b: any) => b.overallHealing.totalDamage - a.overallHealing.totalDamage);
