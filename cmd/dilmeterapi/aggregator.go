@@ -739,6 +739,7 @@ func (a *Aggregator) processCombatAction(p *packet.GamePacket) {
 					stats.HealingByTarget[targetIdStr] = targetBreakdown
 				}
 			}
+			}
 		} else if sub.Hit.Damage > 0 {
 			// ROUTE B: Standard offensive damage dealt to a boss/enemy
 			if playerInfo, isPlayer := playerCache.Get(attackerId); isPlayer {
@@ -754,7 +755,7 @@ func (a *Aggregator) processCombatAction(p *packet.GamePacket) {
 			a.updateDamageTaken(targetInfo, attackerId, attackSkillId, sub.Hit.Damage, float32(sub.Hit.ManaDamage))
 		}
 	}
-}			
+}	
 func (a *Aggregator) getOrCreatePlayerStats(playerInfo *PlayerInfo) *PlayerStats {
 	stats, exists := a.playerStats[playerInfo.ID]
 	if !exists {
