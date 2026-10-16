@@ -201,7 +201,7 @@ export default defineComponent({
       return Object.values(overallHealing.skills) as SkillStats[];
     };
 
-    // Goal 2: Stacked Progress Bar Color Engine (Deep Burgundy + Neon Green)
+        // Goal 2: Stacked Progress Bar Color Engine (Deep Burgundy + Neon Green)
     const getRowProps = ({ item }: { item: any }) => {
       const players = playerDisplayData.value;
       if (!players || players.length === 0) return { class: "character-row" };
