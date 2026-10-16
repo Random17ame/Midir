@@ -767,7 +767,7 @@ func (a *Aggregator) processCombatAction(p *packet.GamePacket) {
 						targetBreakdown.OvershieldProvided += overshieldOverflow
 						stats.HealingByTarget[targetIdStr] = targetBreakdown
 					}
-
+					}
 				} else {
 					// Fallback Gate: If player state is uncached, treat the entire hit as standard healing
 					a.updateBreakdown(&stats.OverallHealing, tempHealPacket, attackSkillId, false)
@@ -778,6 +778,7 @@ func (a *Aggregator) processCombatAction(p *packet.GamePacket) {
 					a.updateBreakdown(&targetBreakdown, tempHealPacket, attackSkillId, false)
 					stats.HealingByTarget[targetIdStr] = targetBreakdown
 				}
+			}
 			}
 		} else if sub.Hit.Damage > 0 {
 			// ROUTE B: Standard offensive damage dealt to a boss/enemy
