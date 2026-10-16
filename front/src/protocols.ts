@@ -43,6 +43,7 @@ export interface DamageBreakdown {
   critCount: number;
   dps: number;
   critRate: number;
+  overshieldProvided?: number;
   startTime?: number;
   endTime?: number;
   skills: { [skillId: number]: SkillStats };
@@ -57,6 +58,8 @@ export interface PlayerStats {
   talentColor?: string;
   missingAppearPacket: boolean; // NEW: Cache warning flag
   overallStats: DamageBreakdown;
+  overallHealing: DamageBreakdown;
+  healingByTarget: { [targetID: string]: DamageBreakdown};
   damageByTarget: { [targetId: string]: DamageBreakdown };
   deaths?: number[];
 }
