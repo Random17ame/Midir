@@ -717,20 +717,60 @@ func (a *Aggregator) processCombatAction(p *packet.GamePacket) {
 				}
 				
 				// Fetch dynamic active health layers natively from Midir's entity state engine
-				if entityState, isCached := a.entityCache[sub.EntityId]; isCached && entityState.CurrentHP >= entityState.MaxHP {
-					// Separate and log overflow points straight to your custom shield property
-					stats.OverallHealing.OvershieldProvided += sub.Hit.Damage
-					
-					targetBreakdown, exists := stats.HealingByTarget[targetIdStr]
-					if !exists {
-						targetBreakdown = newDamageBreakdown()
+				if entityState, isCached := a.entityCache[sub.EntityId]; isCached {
+					// Calculate exactly how many health points the target actually needed to reach full HP
+					missingHP := entityState.MaxHP - entityState.CurrentHP
+					if missingHP < 0 {
+						missingHP = 0
 					}
-					targetBreakdown.OvershieldProvided += sub.Hit.Damage
-					stats.HealingByTarget[targetIdStr] = targetBreakdown
+
+					var effectiveHeal float32 = 0
+					var overshieldOverflow float32 = 0
+
+					// Mathematical Splitting Engine
+					if sub.Hit.Damage > missingHP {
+						// The spell healed more than what was missing! Split the difference.
+						effectiveHeal = missingHP
+						overshieldOverflow = sub.Hit.Damage - missingHP
+					} else {
+						// The target is still wounded. The entire hit goes to effective healing.
+						effectiveHeal = sub.Hit.Damage
+						overshieldOverflow = 0
+					}
+
+					// 1. Process and record the effective health recovery portion
+					if effectiveHeal > 0 {
+						tempEffectivePacket := &packet.CombatActionPacket{
+							Hit: &packet.CombatActionPacketHitInfo{
+								Damage:  effectiveHeal,
+								Options: sub.Hit.Options,
+							},
+						}
+						a.updateBreakdown(&stats.OverallHealing, tempEffectivePacket, attackSkillId, false)
+						
+						targetBreakdown, exists := stats.HealingByTarget[targetIdStr]
+						if !exists {
+							targetBreakdown = newDamageBreakdown()
+						}
+						a.updateBreakdown(&targetBreakdown, tempEffectivePacket, attackSkillId, false)
+						stats.HealingByTarget[targetIdStr] = targetBreakdown
+					}
+
+					// 2. Process and record the overflow points straight to your Neon Green Overshields
+					if overshieldOverflow > 0 {
+						stats.OverallHealing.OvershieldProvided += overshieldOverflow
+						
+						targetBreakdown, exists := stats.HealingByTarget[targetIdStr]
+						if !exists {
+							targetBreakdown = newDamageBreakdown()
+						}
+						targetBreakdown.OvershieldProvided += overshieldOverflow
+						stats.HealingByTarget[targetIdStr] = targetBreakdown
+					}
+
 				} else {
-					// Route standard effective health recovery to the primary tab arrays
+					// Fallback Gate: If player state is uncached, treat the entire hit as standard healing
 					a.updateBreakdown(&stats.OverallHealing, tempHealPacket, attackSkillId, false)
-					
 					targetBreakdown, exists := stats.HealingByTarget[targetIdStr]
 					if !exists {
 						targetBreakdown = newDamageBreakdown()
@@ -738,7 +778,6 @@ func (a *Aggregator) processCombatAction(p *packet.GamePacket) {
 					a.updateBreakdown(&targetBreakdown, tempHealPacket, attackSkillId, false)
 					stats.HealingByTarget[targetIdStr] = targetBreakdown
 				}
-			}
 			}
 		} else if sub.Hit.Damage > 0 {
 			// ROUTE B: Standard offensive damage dealt to a boss/enemy
