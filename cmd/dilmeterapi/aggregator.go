@@ -701,6 +701,8 @@ func (a *Aggregator) getOrCreatePlayerStats(playerInfo *PlayerInfo) *PlayerStats
 			ID:             strconv.FormatUint(playerInfo.ID, 10),
 			Name:           playerInfo.Name,
 			OverallStats:   newDamageBreakdown(),
+			OverallHealing: newDamageBreakdown(),
+			HealingByTarget: make(map[string]DamageBreakdown),
 			DamageByTarget: make(map[string]DamageBreakdown),
 		}
 		a.playerStats[playerInfo.ID] = stats
