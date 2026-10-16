@@ -685,7 +685,7 @@ func (a *Aggregator) processCombatAction(p *packet.GamePacket) {
 		}
 
 		// Check if the entity RECEIVING the packet is a Player Character (Support Mode)
-		if targetPlayer, isTargetAPlayer := playerCache.Get(sub.EntityId); isTargetAPlayer {
+		if _, isTargetAPlayer := playerCache.Get(sub.EntityId); isTargetAPlayer {
 			// ROUTE A: Support Healing Done tracking pipeline
 			if playerInfo, isCasterPlayer := playerCache.Get(casterID); isCasterPlayer {
 				stats := a.getOrCreatePlayerStats(playerInfo)
