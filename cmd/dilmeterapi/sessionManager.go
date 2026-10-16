@@ -204,6 +204,13 @@ func (sm *SessionManager) SaveLiveSession(name string) error {
 			for tID, tBreakdown := range pstat.DamageByTarget {
 				targetDamageMap[tID] += tBreakdown.TotalDamage
 			}
+			// Map support targets to retain names across saved sessions
+			for tIDStr, hBreakdown := range pstat.HealingByTarget {
+				tIDUint, _ := strconv.ParseUint(tIDStr, 10, 64)
+				if name, ok := a.targetNames[tIDUint]; ok {
+					a.targetNames[tIDUint] = name
+					}
+				}
 		}
 
 		sort.Slice(summaryData.Players, func(i, j int) bool {
