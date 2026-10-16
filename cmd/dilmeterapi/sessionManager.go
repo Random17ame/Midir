@@ -42,6 +42,7 @@ type SessionSummaryData struct {
 	StartTime   int64                  `json:"startTime"`
 	Duration    float64                `json:"duration"`
 	TotalDamage float32                `json:"totalDamage"`
+	TotalHealing float32               `json:"totalHealing"`
 	Players     []SessionSummaryPlayer `json:"players"`
 	Enemies     []SessionSummaryEnemy  `json:"enemies"`
 }
@@ -188,6 +189,7 @@ func (sm *SessionManager) SaveLiveSession(name string) error {
 	if err == nil && summary != nil {
 		summaryData.Duration = summary.EncounterDuration
 		summaryData.TotalDamage = summary.TotalDamage
+		summaryData.TotalHealing = totalPartyHealing
 
 		targetDamageMap := make(map[string]float32)
 		var totalPartyHealing float32 = 0 // Injected to accumulate total party healing
@@ -202,10 +204,10 @@ func (sm *SessionManager) SaveLiveSession(name string) error {
 				OverallHealing: pstat.OverallHealing,
 				HealingByTarget: pstat.HealingByTarget,
 			})
+			totalPartyHealing += pstat.OverallHealing.TotalDamage
 			for tID, tBreakdown := range pstat.DamageByTarget {
 				targetDamageMap[tID] += tBreakdown.TotalDamage
 				}
-				totalPartyHealing += pstat.OverallHealing.TotalDamage
 		}
 		sort.Slice(summaryData.Players, func(i, j int) bool {
 			return summaryData.Players[i].TotalDamage > summaryData.Players[j].TotalDamage
