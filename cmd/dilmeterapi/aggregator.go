@@ -709,7 +709,7 @@ func (a *Aggregator) processCombatAction(p *packet.GamePacket) {
 					stats := a.getOrCreatePlayerStats(playerInfo)
 					targetIdStr := strconv.FormatUint(sub.EntityId, 10)
 					
-					// Initialize raw baseline packet placeholder
+					// Initialize raw baseline packet placeholder using valid colon mapping assignments
 					tempHealPacket := &packet.CombatActionPacket{
 						Hit: &packet.CombatActionPacketHitInfo{
 							Damage:  sub.Hit.Damage,
@@ -780,6 +780,7 @@ func (a *Aggregator) processCombatAction(p *packet.GamePacket) {
 					} else {
 						// Fallback Gate: If player state is uncached, treat the entire hit as standard healing
 						a.updateBreakdown(&stats.OverallHealing, tempHealPacket, attackSkillId, false)
+						
 						targetBreakdown, exists := stats.HealingByTarget[targetIdStr]
 						if !exists {
 							targetBreakdown = newDamageBreakdown()
@@ -787,7 +788,8 @@ func (a *Aggregator) processCombatAction(p *packet.GamePacket) {
 						a.updateBreakdown(&targetBreakdown, tempHealPacket, attackSkillId, false)
 						stats.HealingByTarget[targetIdStr] = targetBreakdown
 					}
-
+				}
+			}
 		} else if sub.Hit.Damage > 0 {
 			// ROUTE B: Standard offensive damage dealt to a boss/enemy
 			if playerInfo, isPlayer := playerCache.Get(attackerId); isPlayer {
