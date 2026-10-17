@@ -1083,8 +1083,18 @@ const toggleAllPlayersVisibility = () => {
         setAllHiddenPlayers(allIds, true);
     }
 };
-
-
+  
+  const isolateSinglePlayer = (targetPlayerId: string) => {
+  // Clear any active global hiding configurations
+  globalHideMode.value = false;
+  
+  // Set all players to hidden first
+  const allIds = playerDisplayData.value.map((p: any) => p.id);
+  setAllHiddenPlayers(allIds, true);
+  
+  // Remove our specific chosen character from the hidden list to keep them visible
+  hiddenPlayers.delete(targetPlayerId);
+};
 
 // (Old static headers removed, using computed headers now)
 </script>
