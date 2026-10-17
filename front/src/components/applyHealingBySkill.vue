@@ -31,7 +31,8 @@
       >
         <v-icon>{{ hiddenPlayers.has(item.id) ? 'mdi-eye-off-outline' : 'mdi-eye-outline' }}</v-icon>
       </v-btn>
-      <span class="font-weight-medium text-body-1">
+      <span class="font-weight-medium text-body-1 transition-all" 
+        :style="{ color: getPlayerColor(item) }">
         {{ hiddenPlayers.has(item.id) ? 'Hidden' : item.name }}
       </span>
     </div>
@@ -130,6 +131,7 @@ import { fightSummary, activeSessionId, selectedTargetId, hiddenPlayers, globalH
 import { DamageBreakdown, SkillStats } from "@/protocols";
 import { isGroupTargetId, getGroupMemberTargetIds, getEncounterDurationForTargets } from "@/utils/targetGrouping";
 import { toggleHiddenPlayer } from "@/store";
+import { getMabiNameColor, getClassColor } from "@/util";
 
 export default defineComponent({
   name: "ApplyHealingBySkill",
@@ -187,6 +189,15 @@ export default defineComponent({
         .filter((p: any) => p.overallHealing.totalDamage > 0 || p.overallHealing.overshieldProvided > 0)
         .sort((a: any, b: any) => b.overallHealing.totalDamage - a.overallHealing.totalDamage);
     });
+       
+    // Resolves row tracking colors based on custom user choices or active arcana
+    const getPlayerColor = (item: any) => {
+      const isHidden = globalHideMode.value || hiddenPlayers.has(item.id);
+      const shouldUseClassColor = isHidden || showClassColorsForVisiblePlayers.value;
+      return shouldUseClassColor 
+        ? getClassColor(item.talentName, item.talentColor) 
+        : getMabiNameColor(item.name);
+    };
 
     const totalHealingForView = computed(() => {
       return playerDisplayData.value.reduce((sum: number, p: any) => sum + (p.overallHealing?.totalDamage || 0), 0);
@@ -262,6 +273,7 @@ export default defineComponent({
       getSkillImageSrc,
       getSkillBreakdown,
       getRowProps,
+      getPlayerColor,
       toggleHiddenPlayer,
       hiddenPlayers,
     };
