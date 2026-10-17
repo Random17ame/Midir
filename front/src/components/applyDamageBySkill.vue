@@ -35,11 +35,11 @@
                     :color="(globalHideMode || hiddenPlayers.has(item.id)) ? 'grey' : ''"></v-icon>
         </v-btn>
     </template>
-  <template v-slot:[`item.name`]="{ item }">
+    <template v-slot:[`item.name`]="{ item }">
     <div 
-      @dblclick="isolateSinglePlayer(item.id)" 
+      @click.stop="toggleHiddenPlayer(item.id)" 
       class="cursor-pointer d-flex align-center select-none w-100 h-100"
-      title="Double-click to isolate this player & open scatter plot"
+      title="Click player row name to toggle visibility"
       style="min-height: 28px;"
     >
       <img
@@ -49,9 +49,28 @@
         height="28"
         class="mr-2"
       />
-      <span class="text-h6" style="color: white">
+      <span class="text-h6" :style="{ color: getPlayerColor(item) }">
         {{ (globalHideMode || hiddenPlayers.has(item.id)) ? (item.talentName || 'Hidden') : item.name }}
       </span>
+
+      <!-- Warning Icon for Missing Appear Packet -->
+      <v-tooltip
+        v-if="item.missingAppearPacket"
+        location="top"
+        text="Entity appearance not recorded. Condition uptime may be inaccurate."
+      >
+        <template v-slot:activator="{ props }">
+          <v-icon
+            v-bind="props"
+            icon="mdi-alert-circle-outline"
+            color="warning"
+            size="small"
+            class="ml-2"
+          ></v-icon>
+        </template>
+      </v-tooltip>
+    </div>
+  </template>
 
       <!-- Warning Icon for Missing Appear Packet -->
       <v-tooltip
