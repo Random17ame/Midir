@@ -688,7 +688,7 @@ func (a *Aggregator) processCombatAction(p *packet.GamePacket) {
 			sub.Hit.ManaDamage = 0
 		}
 		// Optimization Rule: Revert safety gate to let standard combat subpackets pass cleanly
-		if sub.Hit == nil || (sub.Hit.Damage <= 0 && sub.Hit.ManaDamage <= 0) {
+		if sub.Hit == nil || (sub.Hit.Damage == 0 && sub.Hit.ManaDamage <= 0) {
 			continue
 		}
 
