@@ -14,23 +14,28 @@
     hide-default-footer
   >
     <!-- Character Rows -->
-    <template v-slot:[`item.name`]="{ item }">
-      <div class="d-flex align-center font-weight-bold py-1">
-        <v-btn
-          icon
-          variant="text"
-          density="compact"
-          size="small"
-          class="mr-1"
-          @click.stop="toggleHiddenPlayer(item.id)"
-        >
-          <v-icon :color="hiddenPlayers.has(item.id) ? 'grey' : 'white'">
-            {{ hiddenPlayers.has(item.id) ? 'mdi-eye-off-outline' : 'mdi-eye-outline' }}
-          </v-icon>
-        </v-btn>
-        <span>{{ hiddenPlayers.has(item.id) ? 'Hidden' : item.name }}</span>
-      </div>
-    </template>
+      <template v-slot:[item.name]="{ item }">
+    <div 
+      @dblclick="isolateSinglePlayer(item.id)" 
+      class="cursor-pointer d-flex align-center select-none w-100 h-100"
+      title="Double-click to isolate this player & open scatter plot"
+      style="min-height: 28px;"
+    >
+      <v-btn 
+        icon 
+        variant="text" 
+        density="compact" 
+        size="small" 
+        class="mr-1" 
+        @click.stop="toggleHiddenPlayer(item.id)"
+      >
+        <v-icon>{{ hiddenPlayers.has(item.id) ? 'mdi-eye-off-outline' : 'mdi-eye-outline' }}</v-icon>
+      </v-btn>
+      <span class="font-weight-medium text-body-1">
+        {{ hiddenPlayers.has(item.id) ? 'Hidden' : item.name }}
+      </span>
+    </div>
+  </template>
 
     <!-- Effective Heals -->
     <template v-slot:[`item.overallHealing.totalDamage`]="{ item }">
@@ -200,6 +205,18 @@ export default defineComponent({
       if (!overallHealing?.skills) return [];
       return Object.values(overallHealing.skills) as SkillStats[];
     };
+      const isolateSinglePlayer = (targetPlayerId: string) => {
+    // Clear any active global hiding configurations
+    globalHideMode.value = false;
+    
+    // Set all players to hidden first
+    const allIds = playerDisplayData.value.map((p: any) => p.id);
+    setAllHiddenPlayers(allIds, true);
+    
+    // Remove our specific chosen character from the hidden list to keep them visible
+    hiddenPlayers.delete(targetPlayerId);
+  };
+
 
         // Goal 2: Stacked Progress Bar Color Engine (Deep Burgundy + Neon Green)
     const getRowProps = ({ item }: { item: any }) => {
@@ -232,6 +249,7 @@ export default defineComponent({
     };
     
     return {
+      isolateSinglePlayer,
       expanded,
       mainTableHeaders,
       computedSkillTableHeaders,
