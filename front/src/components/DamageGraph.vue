@@ -61,6 +61,7 @@
 
 <script lang="ts">
 import { defineComponent, computed, inject, ref, watch } from "vue";
+import DamageScatterChart from "./DamageScatterChart.vue";
 import { Line as LineChart } from "vue-chartjs";
 import ConditionTimeline from "./ConditionTimeline.vue";
 import {
@@ -138,7 +139,7 @@ ChartJS.register(
 
 export default defineComponent({
   name: "DamageGraph",
-  components: { LineChart, ConditionTimeline },
+  components: { LineChart, ConditionTimeline, DamageScatterChart },
   setup() {
     const condNameMap = inject("condNameMap") as any;
     const getTargetHPAtTime = (t: number, hpHistory: any[]) => {
