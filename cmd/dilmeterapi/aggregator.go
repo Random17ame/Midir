@@ -697,7 +697,7 @@ func (a *Aggregator) processCombatAction(p *packet.GamePacket) {
 
 		// CRITICAL SCOPE FIX: Always declare casterID immediately before using it in any sub-routes
 		if sub.Hit.AttackerId > 0 {
-			casterID = sub.Hit.AttackerId
+			casterId = sub.Hit.AttackerId
 		}
 
 		// Check if the entity RECEIVING the packet is a Player Character (Support Mode)
