@@ -42,12 +42,18 @@
       </div>
       <div style="height: 500px" class="chart-wrapper">
         <LineChart :data="chartData" :options="chartOptions" />
-            <!-- Render scatterplot only when single player isolation is achieved -->
-    <DamageScatterChart 
+        
+        <!-- Render scatterplot within its own clean container surface box -->
+    <v-card 
       v-if="isolatedPlayer" 
-      :playerStats="isolatedPlayer.stats"
-      :playerColor="isolatedPlayer.color"
-    />
+      class="mt-6 pa-4 border-card elevation-4" 
+      style="background: #1e293b; border: 1px solid rgba(255,255,255,0.08);"
+    >
+      <DamageScatterChart 
+        :playerStats="isolatedPlayer.stats"
+        :playerColor="isolatedPlayer.color"
+      />
+    </v-card>
 
       </div>
       <div v-if="selectedTargetConditions" class="mt-4">
