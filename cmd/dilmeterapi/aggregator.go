@@ -788,24 +788,26 @@ func (a *Aggregator) processCombatAction(p *packet.GamePacket) {
 		packetDmgVal := uint64(sub.Hit.Damage)
 		targetGroup.TotalDmg += packetDmgVal
 
-		// Track or insert subpacket skill specifications inside this second
-		foundSubSkill := false
-		packetIsCrit := (sub.Hit.Options & packet.CombatActionHitOptionsCritical) != 0
+			// Track or insert subpacket skill specifications inside this second
+			foundSubSkill := false
+			packetIsCrit := (sub.Hit.Options & packet.CombatActionHitOptionsCritical) != 0
 
-		for i := range targetGroup.Skills {
-			if targetGroup.Skills[i].SkillID == attackSkillId {
-				targetGroup.Skills[i].HitCount++
-				targetGroup.Skills[i].Damage += packetDmgVal
-				if packetDmgVal > targetGroup.Skills[i].MaxDamage {
-					targetGroup.Skills[i].MaxDamage = packetDmgVal
+			for i := range targetGroup.Skills {
+				if targetGroup.Skills[i].SkillID == attackSkillId {
+					targetGroup.Skills[i].HitCount++
+					targetGroup.Skills[i].Damage += packetDmgVal
+					if packetDmgVal > targetGroup.Skills[i].MaxDamage {
+						targetGroup.Skills[i].MaxDamage = packetDmgVal
+					}
+					if packetIsCrit {
+						targetGroup.Skills[i].CritCount++
+					}
+					foundSubSkill = true
+					break
 				}
-				if packetIsCrit {
-					targetGroup.Skills[i].CritCount++
-				}
-				foundSubSkill = true
-				break
 			}
-		}
+		} // <-- Closes your active 'if playerInfo' statement cleanly
+
 
 		if !foundSubSkill {
 			critVal := uint32(0)
