@@ -14,7 +14,8 @@
     hide-default-footer
   >
     <!-- Character Rows -->
-      <template v-slot:[item.name]="{ item }">
+  <v-data-table ... >
+    <template v-slot:[`item.name`]="{ item }">
     <div 
       @dblclick="isolateSinglePlayer(item.id)" 
       class="cursor-pointer d-flex align-center select-none w-100 h-100"
@@ -126,7 +127,7 @@
 
 <script lang="ts">
 import { defineComponent, ref, computed, inject, watch } from "vue";
-import { fightSummary, activeSessionId, selectedTargetId, hiddenPlayers, globalHideMode } from "@/store";
+import { fightSummary, activeSessionId, selectedTargetId, hiddenPlayers, globalHideMode, setAllHiddenPlayers } from "@/store";
 import { DamageBreakdown, SkillStats } from "@/protocols";
 import { isGroupTargetId, getGroupMemberTargetIds, getEncounterDurationForTargets } from "@/utils/targetGrouping";
 import { toggleHiddenPlayer } from "@/store";
