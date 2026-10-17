@@ -708,22 +708,22 @@ func (sm *SessionManager) MigrateSession(sessionID string) error {
 	summaryData.TotalDamage = summary.TotalDamage
 	
 	targetDamageMap := make(map[string]float32)
-
+	
 	for _, pstat := range summary.Players {
-		summaryData.Players = append(summaryData.Players, SessionSummaryPlayer{
-			Name:        pstat.Name,
-			DPS:         pstat.OverallStats.DPS,
-			ArcanaName:  pstat.TalentName,
-			ArcanaIcon:  "", // Omit from disk serialization (omitempty)
-			TotalDamage: pstat.OverallStats.TotalDamage,
-			OverallHealing: pstat.OverallHealing,
-			HealingByTarget: pstat.HealingByTarget,
-		})
-		
-		for tID, tBreakdown := range pstat.DamageByTarget {
-			targetDamageMap[tID] += tBreakdown.TotalDamage
+			summaryData.Players = append(summaryData.Players, SessionSummaryPlayer{
+				Name:            pstat.Name,
+				DPS:             pstat.OverallStats.DPS,
+				ArcanaName:      pstat.TalentName,
+				ArcanaIcon:      "", // Omit from disk serialization (omitempty)
+				TotalDamage:     pstat.OverallStats.TotalDamage,
+				OverallHealing:  pstat.OverallHealing,
+				HealingByTarget: pstat.HealingByTarget,
+				SkillUses:       pstat.SkillUses, // <-- Add this here to fix migrations!
+			})
+			for tID, tBreakdown := range pstat.DamageByTarget {
+				targetDamageMap[tID] += tBreakdown.TotalDamage
+			}
 		}
-	}
 	
 	sort.Slice(summaryData.Players, func(i, j int) bool {
 		return summaryData.Players[i].TotalDamage > summaryData.Players[j].TotalDamage
