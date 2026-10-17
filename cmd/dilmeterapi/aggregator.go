@@ -755,29 +755,34 @@ func (a *Aggregator) processCombatAction(p *packet.GamePacket) {
 				a.updateDamageTaken(targetInfo, attackerId, attackSkillId, sub.Hit.Damage, float32(sub.Hit.ManaDamage))
 			}
 		}
-						// --- START: SECOND-INCREMENT CHRONOLOGICAL SCATTER DATA CAPTURE ---
+				// --- START: SECOND-INCREMENT CHRONOLOGICAL SCATTER DATA CAPTURE ---
 		relativeSecond := p.At.Unix() - a.encounterStartTime
 		if relativeSecond < 0 {
 			relativeSecond = 0
 		}
 
-		// Locate or append the bucket for the current flight second
-		var targetGroup *SkillGroupEvent
-		for i := range stats.SkillUses {
-			if stats.SkillUses[i].Timestamp == relativeSecond {
-				targetGroup = &stats.SkillUses[i]
-				break
-			}
-		}
+		// Pull the player stats context into the scope of this subpacket capture loop
+		if playerInfo, isPlayer := playerCache.Get(attackerId); isPlayer {
+			pStats := a.getOrCreatePlayerStats(playerInfo)
 
-		if targetGroup == nil {
-			stats.SkillUses = append(stats.SkillUses, SkillGroupEvent{
-				Timestamp: relativeSecond,
-				TotalDmg:  0,
-				Skills:    []SkillHitMeta{},
-			})
-			targetGroup = &stats.SkillUses[len(stats.SkillUses)-1]
-		}
+			// Locate or append the bucket for the current flight second
+			var targetGroup *SkillGroupEvent
+			for i := range pStats.SkillUses {
+				if pStats.SkillUses[i].Timestamp == relativeSecond {
+					targetGroup = &pStats.SkillUses[i]
+					break
+				}
+			}
+
+			if targetGroup == nil {
+				pStats.SkillUses = append(pStats.SkillUses, SkillGroupEvent{
+					Timestamp: relativeSecond,
+					TotalDmg:  0,
+					Skills:    []SkillHitMeta{},
+				})
+				targetGroup = &pStats.SkillUses[len(pStats.SkillUses)-1]
+			}
+
 
 		// Accumulate the overall damage total for this interval
 		packetDmgVal := uint64(sub.Hit.Damage)
