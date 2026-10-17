@@ -755,7 +755,7 @@ func (a *Aggregator) processCombatAction(p *packet.GamePacket) {
 				a.updateDamageTaken(targetInfo, attackerId, attackSkillId, sub.Hit.Damage, float32(sub.Hit.ManaDamage))
 			}
 		}
-				// --- START: SECOND-INCREMENT CHRONOLOGICAL SCATTER DATA CAPTURE ---
+		// --- START: SECOND-INCREMENT CHRONOLOGICAL SCATTER DATA CAPTURE ---
 		relativeSecond := p.At.Unix() - a.encounterStartTime
 		if relativeSecond < 0 {
 			relativeSecond = 0
@@ -765,7 +765,7 @@ func (a *Aggregator) processCombatAction(p *packet.GamePacket) {
 		if playerInfo, isPlayer := playerCache.Get(attackerId); isPlayer {
 			pStats := a.getOrCreatePlayerStats(playerInfo)
 
-			// Locate or append the bucket for the current flight second
+			// 1. Locate or append the bucket for the current flight second
 			var targetGroup *SkillGroupEvent
 			for i := range pStats.SkillUses {
 				if pStats.SkillUses[i].Timestamp == relativeSecond {
@@ -783,12 +783,11 @@ func (a *Aggregator) processCombatAction(p *packet.GamePacket) {
 				targetGroup = &pStats.SkillUses[len(pStats.SkillUses)-1]
 			}
 
+			// 2. Safely cast and accumulate the overall damage total for this interval
+			packetDmgVal := uint64(sub.Hit.Damage)
+			targetGroup.TotalDmg += packetDmgVal
 
-		// Accumulate the overall damage total for this interval
-		packetDmgVal := uint64(sub.Hit.Damage)
-		targetGroup.TotalDmg += packetDmgVal
-
-			// Track or insert subpacket skill specifications inside this second
+			// 3. Track or insert subpacket skill specifications inside this second
 			foundSubSkill := false
 			packetIsCrit := (sub.Hit.Options & packet.CombatActionHitOptionsCritical) != 0
 
@@ -806,23 +805,62 @@ func (a *Aggregator) processCombatAction(p *packet.GamePacket) {
 					break
 				}
 			}
-		} // <-- Closes your active 'if playerInfo' statement cleanly
 
-
-		if !foundSubSkill {
-			critVal := uint32(0)
-			if packetIsCrit {
-				critVal = 1
+			// 4. If this skill has not been recorded during this second yet, append it cleanly
+			if !foundSubSkill {
+				critCountVal := uint32(0)
+				if packetIsCrit {
+					critCountVal = 1
+				}
+				targetGroup.Skills = append(targetGroup.Skills, SkillHitMeta{
+					SkillID:   attackSkillId,
+					HitCount:  1,
+					Damage:    packetDmgVal,
+					MaxDamage: packetDmgVal,
+					CritCount: critCountVal,
+				})
 			}
-			targetGroup.Skills = append(targetGroup.Skills, SkillHitMeta{
-				SkillID:   attackSkillId,
-				HitCount:  1,
-				Damage:    packetDmgVal,
-				MaxDamage: packetDmgVal,
-				CritCount: critVal,
-			})
 		}
+
 		// --- END: SECOND-INCREMENT CHRONOLOGICAL SCATTER DATA CAPTURE ---
+
+		// Check if the entity RECEIVING the packet is a Player Character (Support Mode)
+		if _, isTargetAPlayer := playerCache.Get(sub.EntityId); isTargetAPlayer {
+			// ROUTE A: Process supportive party healing metrics cleanly
+			if sub.Hit != nil && sub.Hit.Damage < 0 && (sub.Hit.Options & 1) != 0 {
+				casterId := attackerId
+				if sub.Hit.AttackerId > 0 {
+					casterId = sub.Hit.AttackerId
+				}
+				if playerInfo, isPlayer := playerCache.Get(casterId); isPlayer {
+					stats := a.getOrCreatePlayerStats(playerInfo)
+					targetIdStr := strconv.FormatUint(sub.EntityId, 10)
+					
+					// Convert negative raw damage wound values to positive healing numbers
+					healAmount := -sub.Hit.Damage
+					tempHealPacket := &packet.CombatActionPacket{
+						Hit: &packet.CombatActionPacketHitInfo{
+							Damage:  healAmount,
+							Options: sub.Hit.Options,
+						},
+					}
+					a.updateBreakdown(&stats.OverallHealing, tempHealPacket, attackSkillId, false)
+					
+					targetBreakdown, exists := stats.HealingByTarget[targetIdStr]
+					if !exists {
+						targetBreakdown = newDamageBreakdown()
+					}
+					a.updateBreakdown(&targetBreakdown, tempHealPacket, attackSkillId, false)
+					stats.HealingByTarget[targetIdStr] = targetBreakdown
+				}
+			}
+		} else if sub.Hit != nil && sub.Hit.Damage > 0 {
+			// ROUTE B: Standard offensive damage dealt to a boss/enemy
+			if playerInfo, isPlayer := playerCache.Get(attackerId); isPlayer {
+				stats := a.getOrCreatePlayerStats(playerInfo)
+				a.updateBreakdown(&stats.OverallStats, sub, attackSkillId, false)
+				targetIdStr := strconv.FormatUint(sub.EntityId, 10)
+				a.updatePerTargetBreakdown(stats, targetIdStr, sub, attackSkillId, false)
 			}
 		}
 
@@ -831,7 +869,8 @@ func (a *Aggregator) processCombatAction(p *packet.GamePacket) {
 			a.updateDamageTaken(targetInfo, attackerId, attackSkillId, sub.Hit.Damage, float32(sub.Hit.ManaDamage))
 		}
 	}
-}	
+)
+
 func (a *Aggregator) getOrCreatePlayerStats(playerInfo *PlayerInfo) *PlayerStats {
 	stats, exists := a.playerStats[playerInfo.ID]
 	if !exists {
