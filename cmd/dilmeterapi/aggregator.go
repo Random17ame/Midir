@@ -954,6 +954,7 @@ func (a *Aggregator) GetSummary() FightSummary {
 			TalentColor:         a.playerTalentColors[playerID],
 			DamageByTarget:      make(map[string]DamageBreakdown),
 			MissingAppearPacket: !a.playerSeenAppear[playerID], // Set the flag
+			SkillUses:           pStats.SkillUses,
 		}
 
 		// Finalize overall stats using the single overall encounter duration
