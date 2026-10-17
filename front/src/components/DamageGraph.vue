@@ -44,17 +44,19 @@
         <LineChart :data="chartData" :options="chartOptions" />
         
         <!-- Render scatterplot within its own clean container surface box -->
-    <v-card 
-      v-if="isolatedPlayer" 
-      class="mt-6 pa-4 border-card elevation-4" 
-      style="background: #1e293b; border: 1px solid rgba(255,255,255,0.08);"
-    >
-      <DamageScatterChart 
-        :playerStats="isolatedPlayer.stats"
-        :playerColor="isolatedPlayer.color"
-      />
-    </v-card>
-
+    <v-row v-if="isolatedPlayer" class="mx-0 my-4 clear-both w-100">
+      <v-col cols="12" class="pa-0">
+        <v-card 
+          class="pa-4 border-card elevation-4" 
+          style="background: #1e293b; border: 1px solid rgba(255,255,255,0.08); width: 100%; min-height: 380px;"
+        >
+          <DamageScatterChart 
+            :playerStats="isolatedPlayer.stats"
+            :playerColor="isolatedPlayer.color"
+          />
+        </v-card>
+      </v-col>
+    </v-row>
       </div>
       <div v-if="selectedTargetConditions" class="mt-4">
           <ConditionTimeline 
