@@ -749,6 +749,67 @@ func (a *Aggregator) processCombatAction(p *packet.GamePacket) {
 				a.updateBreakdown(&stats.OverallStats, sub, attackSkillId, false)
 				targetIdStr := strconv.FormatUint(sub.EntityId, 10)
 				a.updatePerTargetBreakdown(stats, targetIdStr, sub, attackSkillId, false)
+						// --- START: SECOND-INCREMENT CHRONOLOGICAL SCATTER DATA CAPTURE ---
+		relativeSecond := p.At.Unix() - a.encounterStartTime
+		if relativeSecond < 0 {
+			relativeSecond = 0
+		}
+
+		// Locate or append the bucket for the current flight second
+		var targetGroup *SkillGroupEvent
+		for i := range stats.SkillUses {
+			if stats.SkillUses[i].Timestamp == relativeSecond {
+				targetGroup = &stats.SkillUses[i]
+				break
+			}
+		}
+
+		if targetGroup == nil {
+			stats.SkillUses = append(stats.SkillUses, SkillGroupEvent{
+				Timestamp: relativeSecond,
+				TotalDmg:  0,
+				Skills:    []SkillHitMeta{},
+			})
+			targetGroup = &stats.SkillUses[len(stats.SkillUses)-1]
+		}
+
+		// Accumulate the overall damage total for this interval
+		packetDmgVal := uint64(sub.Hit.Damage)
+		targetGroup.TotalDmg += packetDmgVal
+
+		// Track or insert subpacket skill specifications inside this second
+		foundSubSkill := false
+		packetIsCrit := (sub.Hit.Options & packet.CombatActionHitOptionsCritical) != 0
+
+		for i := range targetGroup.Skills {
+			if targetGroup.Skills[i].SkillID == attackSkillId {
+				targetGroup.Skills[i].HitCount++
+				targetGroup.Skills[i].Damage += packetDmgVal
+				if packetDmgVal > targetGroup.Skills[i].MaxDamage {
+					targetGroup.Skills[i].MaxDamage = packetDmgVal
+				}
+				if packetIsCrit {
+					targetGroup.Skills[i].CritCount++
+				}
+				foundSubSkill = true
+				break
+			}
+		}
+
+		if !foundSubSkill {
+			critVal := uint32(0)
+			if packetIsCrit {
+				critVal = 1
+			}
+			targetGroup.Skills = append(targetGroup.Skills, SkillHitMeta{
+				SkillID:   attackSkillId,
+				HitCount:  1,
+				Damage:    packetDmgVal,
+				MaxDamage: packetDmgVal,
+				CritCount: critVal,
+			})
+		}
+		// --- END: SECOND-INCREMENT CHRONOLOGICAL SCATTER DATA CAPTURE ---
 			}
 		}
 
