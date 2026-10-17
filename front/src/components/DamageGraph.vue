@@ -608,28 +608,23 @@ export default defineComponent({
         return fightSummary.targets[selectedTargetId.value]?.conditions;
     });
                 
-    // Track if exactly one player is visible to toggle the scatterplot view
+    // Automatically exposes the scatter plot whenever exactly one player line is visible
     const isolatedPlayer = computed(() => {
       const allPlayers = Object.values(fightSummary.players);
-      const visible = allPlayers.filter(p => !hiddenPlayers.has(p.id) && !globalHideMode.value);
       
-      // FIX: If there is naturally only 1 player total in the party, auto-expose them!
-      if (allPlayers.length === 1) {
-        const soloPlayer = allPlayers[0];
+      // Filter out only the players who are NOT hidden in your layout checkbox list
+      const visiblePlayers = allPlayers.filter(p => !hiddenPlayers.has(p.id) && !globalHideMode.value);
+      
+      // If exactly 1 player is currently left visible on the graphs, reveal the scatter chart!
+      if (visiblePlayers.length === 1) {
+        const targetPlayer = visiblePlayers[0] as any;
         return {
-          stats: soloPlayer,
-          color: getClassColor(soloPlayer.talentName, soloPlayer.talentColor) || getMabiNameColor(soloPlayer.name)
+          stats: targetPlayer,
+          color: getClassColor(targetPlayer.talentName, targetPlayer.talentColor) || getMabiNameColor(targetPlayer.name)
         };
       }
       
-      // Otherwise, maintain our standard macro check
-      if (visible.length === 1) {
-        const player = visible[0];
-        return {
-          stats: player,
-          color: getClassColor(player.talentName, player.talentColor) || getMabiNameColor(player.name)
-        };
-      }
+      // If 0 players or multiple players are visible, keep the scatter chart closed
       return null;
     });
     return {
