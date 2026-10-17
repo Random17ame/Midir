@@ -14,7 +14,6 @@
     hide-default-footer
   >
     <!-- Character Rows -->
-  <v-data-table ... >
     <template v-slot:[`item.name`]="{ item }">
     <div 
       @dblclick="isolateSinglePlayer(item.id)" 
