@@ -35,11 +35,11 @@
                     :color="(globalHideMode || hiddenPlayers.has(item.id)) ? 'grey' : ''"></v-icon>
         </v-btn>
     </template>
-    <template v-slot:[`item.name`]="{ item }">
+  <template v-slot:[`item.name`]="{ item }">
     <div 
-      @click.stop="toggleHiddenPlayer(item.id)" 
+      @dblclick="isolateSinglePlayer(item.id)" 
       class="cursor-pointer d-flex align-center select-none w-100 h-100"
-      title="Click player row name to toggle visibility"
+      title="Double-click to isolate this player & open scatter plot"
       style="min-height: 28px;"
     >
       <img
@@ -49,28 +49,9 @@
         height="28"
         class="mr-2"
       />
-      <span class="text-h6" :style="{ color: getPlayerColor(item) }">
+      <span class="text-h6" style="color: white">
         {{ (globalHideMode || hiddenPlayers.has(item.id)) ? (item.talentName || 'Hidden') : item.name }}
       </span>
-
-      <!-- Warning Icon for Missing Appear Packet -->
-      <v-tooltip
-        v-if="item.missingAppearPacket"
-        location="top"
-        text="Entity appearance not recorded. Condition uptime may be inaccurate."
-      >
-        <template v-slot:activator="{ props }">
-          <v-icon
-            v-bind="props"
-            icon="mdi-alert-circle-outline"
-            color="warning"
-            size="small"
-            class="ml-2"
-          ></v-icon>
-        </template>
-      </v-tooltip>
-    </div>
-  </template>
 
       <!-- Warning Icon for Missing Appear Packet -->
       <v-tooltip
@@ -127,7 +108,7 @@
       </div>
     </template>
 
-    <template v-slot:[`expanded-row`]="{ columns, item }: any">
+    <template v-slot:expanded-row="{ columns, item }">
       <tr>
         <td :colspan="columns.length">
           <!-- Condition Uptime Section -->
@@ -141,9 +122,17 @@
            </div>
 
           <!-- Skill Breakdown Table -->
-       <v-data-table
-      :row-props="(props: any) => getSkillRowProps(props.item, (getSkillBreakdown(item)?.[0]?.totalDamage || 0), item.name, item, props.index)"
-
+          <v-data-table
+            :row-props="
+              ({ item: skillItem, index }) =>
+                getSkillRowProps(
+                  skillItem,
+                  getSkillBreakdown(item)[0].totalDamage,
+                  item.name,
+                  item,
+                  index
+                )
+            "
             :headers="computedSkillTableHeaders"
             :items="getSkillBreakdown(item)"
             item-value="id"
@@ -152,7 +141,7 @@
             :items-per-page="-1"
             hide-default-footer
           >
-            <template v-slot:[`item.skillName`]="{ item: skillItem }: any">
+            <template v-slot:[`item.skillName`]="{ item: skillItem }">
               <div class="d-flex align-center">
                 <v-icon v-if="skillItem.id === 9999" class="mr-2" size="24" color="amber">mdi-paw</v-icon>
                 <img
@@ -170,11 +159,11 @@
               </div>
             </template>
 
-            <template v-slot:[`item.uses`]="{ item: skillItem }: any">
+            <template v-slot:[`item.uses`]="{ item: skillItem }">
               {{ formatNumber(skillItem.uses) }}
             </template>
 
-            <template v-slot:[`item.totalDamage`]="{ item: skillItem }: any">
+            <template v-slot:[`item.totalDamage`]="{ item: skillItem }">
               <div v-if="dpsMeterFillMode === 'column'" class="damage-bar-cell skill-bar-cell">
                 <span class="damage-bar-val">
                   {{ formatNumber(skillItem.totalDamage) }}
@@ -1098,7 +1087,19 @@ const toggleAllPlayersVisibility = () => {
         const allIds = playerDisplayData.value.map(p => p.id);
         setAllHiddenPlayers(allIds, true);
     }
-});
+};
+  
+  const isolateSinglePlayer = (targetPlayerId: string) => {
+  // Clear any active global hiding configurations
+  globalHideMode.value = false;
+  
+  // Set all players to hidden first
+  const allIds = playerDisplayData.value.map((p: any) => p.id);
+  setAllHiddenPlayers(allIds, true);
+  
+  // Remove our specific chosen character from the hidden list to keep them visible
+  hiddenPlayers.delete(targetPlayerId);
+};
 
 // (Old static headers removed, using computed headers now)
 </script>
