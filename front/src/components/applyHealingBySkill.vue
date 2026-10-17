@@ -127,7 +127,7 @@
 
 <script lang="ts">
 import { defineComponent, ref, computed, inject, watch } from "vue";
-import { fightSummary, activeSessionId, selectedTargetId, hiddenPlayers, globalHideMode, setAllHiddenPlayers } from "@/store";
+import { fightSummary, activeSessionId, selectedTargetId, hiddenPlayers, globalHideMode, setAllHiddenPlayers, showClassColorsForVisiblePlayers } from "@/store";
 import { DamageBreakdown, SkillStats } from "@/protocols";
 import { isGroupTargetId, getGroupMemberTargetIds, getEncounterDurationForTargets } from "@/utils/targetGrouping";
 import { toggleHiddenPlayer } from "@/store";
