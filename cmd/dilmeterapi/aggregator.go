@@ -694,33 +694,30 @@ func (a *Aggregator) processCombatAction(p *packet.GamePacket) {
 
 		// Update shared timers for the combat instance
 		a.updateTimestamps(sub.EntityId, p.At)
-		
-		// Check if the entity RECEIVING the packet is a Player Character (Support Mode)
-		if _, isTargetAPlayer := playerCache.Get(sub.EntityId); isTargetAPlayer {
-			
-		// ROUTE A: Process supportive party healing metrics cleanly
-		if sub.Hit != nil && sub.Hit.Damage < 0 && (sub.Hit.Options&1) != 0 {
+
+		// --- NEW TARGET-INDEPENDENT HEALING OVERHAUL ROUTING ---
+		if sub.Hit != nil && sub.Hit.Damage < 0 {
 			casterId := attackerId
 			if sub.Hit.AttackerId > 0 {
 				casterId = sub.Hit.AttackerId
 			}
+			
 			if playerInfo, isPlayer := playerCache.Get(casterId); isPlayer {
 				stats := a.getOrCreatePlayerStats(playerInfo)
 				targetIdStr := strconv.FormatUint(sub.EntityId, 10)
 				
-				// Convert negative raw damage wound values to positive healing numbers
+				// Convert negative raw damage values to positive healing metrics
 				healAmount := -sub.Hit.Damage
-
 				tempHealPacket := &packet.CombatActionPacket{
 					Hit: &packet.CombatActionPacketHitInfo{
 						Damage:  healAmount,
 						Options: sub.Hit.Options,
 					},
 				}
-				
+
 				// Record to the overall player total healing breakdown
 				a.updateBreakdown(&stats.OverallHealing, tempHealPacket, attackSkillId, false)
-				
+
 				// Safely record individual skill casts under the player's healing skills map
 				healStats, exists := stats.HealingSkills[attackSkillId]
 				if !exists {
@@ -732,8 +729,8 @@ func (a *Aggregator) processCombatAction(p *packet.GamePacket) {
 					healStats.CritCount++
 				}
 				stats.HealingSkills[attackSkillId] = healStats
-				
-				// Record individual target distributions
+
+				// Record individual target distributions safely
 				targetBreakdown, exists := stats.HealingByTarget[targetIdStr]
 				if !exists {
 					targetBreakdown = newDamageBreakdown()
@@ -741,14 +738,22 @@ func (a *Aggregator) processCombatAction(p *packet.GamePacket) {
 				a.updateBreakdown(&targetBreakdown, tempHealPacket, attackSkillId, false)
 				stats.HealingByTarget[targetIdStr] = targetBreakdown
 			}
-		}
-		} else if sub.Hit.Damage > 0 {
+		} else if sub.Hit != nil && sub.Hit.Damage > 0 {
 			// ROUTE B: Standard offensive damage dealt to a boss/enemy
 			if playerInfo, isPlayer := playerCache.Get(attackerId); isPlayer {
 				stats := a.getOrCreatePlayerStats(playerInfo)
 				a.updateBreakdown(&stats.OverallStats, sub, attackSkillId, false)
 				targetIdStr := strconv.FormatUint(sub.EntityId, 10)
 				a.updatePerTargetBreakdown(stats, targetIdStr, sub, attackSkillId, false)
+			}
+		}
+
+		// Keep tracking standard incoming damage statistics if the receiver is a player
+		if targetInfo, isPlayerTarget := playerCache.Get(sub.EntityId); isPlayerTarget {
+			if sub.Hit != nil && sub.Hit.Damage > 0 {
+				a.updateDamageTaken(targetInfo, attackerId, attackSkillId, sub.Hit.Damage, float32(sub.Hit.ManaDamage))
+			}
+		}
 						// --- START: SECOND-INCREMENT CHRONOLOGICAL SCATTER DATA CAPTURE ---
 		relativeSecond := p.At.Unix() - a.encounterStartTime
 		if relativeSecond < 0 {
