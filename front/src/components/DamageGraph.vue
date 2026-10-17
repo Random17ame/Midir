@@ -603,9 +603,18 @@ export default defineComponent({
     // Track if exactly one player is visible to toggle the scatterplot view
     const isolatedPlayer = computed(() => {
       const allPlayers = Object.values(fightSummary.players);
-      // Filter players that are NOT hidden in your global store Set
       const visible = allPlayers.filter(p => !hiddenPlayers.has(p.id) && !globalHideMode.value);
       
+      // FIX: If there is naturally only 1 player total in the party, auto-expose them!
+      if (allPlayers.length === 1) {
+        const soloPlayer = allPlayers[0];
+        return {
+          stats: soloPlayer,
+          color: getClassColor(soloPlayer.talentName, soloPlayer.talentColor) || getMabiNameColor(soloPlayer.name)
+        };
+      }
+      
+      // Otherwise, maintain our standard macro check
       if (visible.length === 1) {
         const player = visible[0];
         return {
