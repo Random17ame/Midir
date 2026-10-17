@@ -22,13 +22,14 @@ const liveSessionFilename = "live-session.ndjson"
 const livePcapFilename = "live-session.pcapng"
 
 type SessionSummaryPlayer struct {
-	Name        string  `json:"name"`
-	DPS         float32 `json:"dps"`
-	ArcanaName  string  `json:"arcanaName"`
-	ArcanaIcon  string  `json:"arcanaIcon,omitempty"`
-	TotalDamage float32 `json:"totalDamage"`
-	OverallHealing DamageBreakdown `json:"overallHealing"`
+	Name            string                     `json:"name"`
+	DPS             float32                    `json:"dps"`
+	ArcanaName      string                     `json:"arcanaName"`
+	ArcanaIcon      string                     `json:"arcanaIcon,omitempty"`
+	TotalDamage     float32                    `json:"totalDamage"`
+	OverallHealing  DamageBreakdown            `json:"overallHealing"`
 	HealingByTarget map[string]DamageBreakdown `json:"healingByTarget"`
+	SkillUses       []SkillGroupEvent          `json:"skillUses"`
 }
 
 type SessionSummaryEnemy struct {
