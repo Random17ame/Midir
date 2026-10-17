@@ -738,15 +738,16 @@ func (a *Aggregator) processCombatAction(p *packet.GamePacket) {
 				a.updateBreakdown(&targetBreakdown, tempHealPacket, attackSkillId, false)
 				stats.HealingByTarget[targetIdStr] = targetBreakdown
 			}
-		} else if sub.Hit != nil && sub.Hit.Damage > 0 {
-			// ROUTE B: Standard offensive damage dealt to a boss/enemy
-			if playerInfo, isPlayer := playerCache.Get(attackerId); isPlayer {
-				stats := a.getOrCreatePlayerStats(playerInfo)
-				a.updateBreakdown(&stats.OverallStats, sub, attackSkillId, false)
-				targetIdStr := strconv.FormatUint(sub.EntityId, 10)
-				a.updatePerTargetBreakdown(stats, targetIdStr, sub, attackSkillId, false)
-			}
-		}
+	} else if sub.Hit != nil && sub.Hit.Damage > 0 { 
+		// ROUTE B: Standard offensive damage dealt to a boss/enemy
+		if playerInfo, isPlayer := playerCache.Get(attackerId); isPlayer { 
+			stats := a.getOrCreatePlayerStats(playerInfo)
+			a.updateBreakdown(&stats.OverallStats, sub, attackSkillId, false)
+			targetIdStr := strconv.FormatUint(sub.EntityId, 10)
+			a.updatePerTargetBreakdown(stats, targetIdStr, sub, attackSkillId, false)
+		} 
+	}
+
 
 		// Keep tracking standard incoming damage statistics if the receiver is a player
 		if targetInfo, isPlayerTarget := playerCache.Get(sub.EntityId); isPlayerTarget {
