@@ -141,8 +141,8 @@
            </div>
 
           <!-- Skill Breakdown Table -->
-              <v-data-table
-      :row-props="(props: any) => getSkillRowProps(props.item, (getSkillBreakdown(item)[0]?.totalDamage || 0), item.name, item, props.index)"
+       <v-data-table
+      :row-props="(props: any) => getSkillRowProps(props.item, (getSkillBreakdown(item)?.[0]?.totalDamage || 0), item.name, item, props.index)"
 
             :headers="computedSkillTableHeaders"
             :items="getSkillBreakdown(item)"
@@ -152,7 +152,7 @@
             :items-per-page="-1"
             hide-default-footer
           >
-            <template v-slot:[`item.skillName`]="{ item: skillItem }">
+            <template v-slot:[`item.skillName`]="{ item: skillItem }: any">
               <div class="d-flex align-center">
                 <v-icon v-if="skillItem.id === 9999" class="mr-2" size="24" color="amber">mdi-paw</v-icon>
                 <img
@@ -170,11 +170,11 @@
               </div>
             </template>
 
-            <template v-slot:[`item.uses`]="{ item: skillItem }">
+            <template v-slot:[`item.uses`]="{ item: skillItem }: any">
               {{ formatNumber(skillItem.uses) }}
             </template>
 
-            <template v-slot:[`item.totalDamage`]="{ item: skillItem }">
+            <template v-slot:[`item.totalDamage`]="{ item: skillItem }: any">
               <div v-if="dpsMeterFillMode === 'column'" class="damage-bar-cell skill-bar-cell">
                 <span class="damage-bar-val">
                   {{ formatNumber(skillItem.totalDamage) }}
