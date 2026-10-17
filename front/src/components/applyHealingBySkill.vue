@@ -14,11 +14,11 @@
     hide-default-footer
   >
     <!-- Character Rows -->
-    <template v-slot:[`item.name`]="{ item }">
+     <template v-slot:[`item.name`]="{ item }">
     <div 
-      @dblclick="isolateSinglePlayer(item.id)" 
+      @click.stop="toggleHiddenPlayer(item.id)" 
       class="cursor-pointer d-flex align-center select-none w-100 h-100"
-      title="Double-click to isolate this player & open scatter plot"
+      title="Click player row name to toggle visibility"
       style="min-height: 28px;"
     >
       <v-btn 
@@ -31,12 +31,15 @@
       >
         <v-icon>{{ hiddenPlayers.has(item.id) ? 'mdi-eye-off-outline' : 'mdi-eye-outline' }}</v-icon>
       </v-btn>
-      <span class="font-weight-medium text-body-1 transition-all" 
-        :style="{ color: getPlayerColor(item) }">
+      <span 
+        class="font-weight-medium text-body-1 transition-all"
+        :style="{ color: getPlayerColor(item) }"
+      >
         {{ hiddenPlayers.has(item.id) ? 'Hidden' : item.name }}
       </span>
     </div>
   </template>
+
 
     <!-- Effective Heals -->
     <template v-slot:[`item.overallHealing.totalDamage`]="{ item }">
