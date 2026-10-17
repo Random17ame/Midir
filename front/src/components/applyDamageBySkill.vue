@@ -127,7 +127,7 @@
       </div>
     </template>
 
-    <template v-slot:expanded-row="{ columns, item }">
+    <template v-slot:[`expanded-row`]="{ columns, item }">
       <tr>
         <td :colspan="columns.length">
           <!-- Condition Uptime Section -->
@@ -141,17 +141,17 @@
            </div>
 
           <!-- Skill Breakdown Table -->
-          <v-data-table
-            :row-props="
-              ({ item: skillItem, index }) =>
-                getSkillRowProps(
-                  skillItem,
-                  getSkillBreakdown(item)[0].totalDamage,
-                  item.name,
-                  item,
-                  index
-                )
-            "
+            <v-data-table
+              :row-props="
+               (props) =>
+                 getSkillRowProps(
+                 props.item,
+                 getSkillBreakdown(item)[0].totalDamage,
+                item.name,
+                item,
+                props.index
+              )
+          "
             :headers="computedSkillTableHeaders"
             :items="getSkillBreakdown(item)"
             item-value="id"
