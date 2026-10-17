@@ -701,7 +701,6 @@ func (a *Aggregator) processCombatAction(p *packet.GamePacket) {
 		// ROUTE A: Process supportive party healing metrics cleanly
 		if sub.Hit != nil && sub.Hit.Damage  0 {
 				casterId = sub.Hit.AttackerId
-			}
 			if playerInfo, isPlayer := playerCache.Get(casterId); isPlayer {
 				stats := a.getOrCreatePlayerStats(playerInfo)
 				targetIdStr := strconv.FormatUint(sub.EntityId, 10)
