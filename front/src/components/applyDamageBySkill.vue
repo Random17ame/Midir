@@ -592,7 +592,7 @@
 }
 
 .pb-16 {
-  padding-bottom: 80px !important;
+  padding-bottom: 420px !important;
 }
 
 /* Modern Table Styling with Gaps and Rounded Bars */
