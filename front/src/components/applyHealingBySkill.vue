@@ -219,19 +219,7 @@ export default defineComponent({
       if (!overallHealing?.skills) return [];
       return Object.values(overallHealing.skills) as SkillStats[];
     };
-      const isolateSinglePlayer = (targetPlayerId: string) => {
-    // Clear any active global hiding configurations
-    globalHideMode.value = false;
     
-    // Set all players to hidden first
-    const allIds = playerDisplayData.value.map((p: any) => p.id);
-    setAllHiddenPlayers(allIds, true);
-    
-    // Remove our specific chosen character from the hidden list to keep them visible
-    hiddenPlayers.delete(targetPlayerId);
-  };
-
-
         // Goal 2: Stacked Progress Bar Color Engine (Deep Burgundy + Neon Green)
     const getRowProps = ({ item }: { item: any }) => {
       const players = playerDisplayData.value;
@@ -263,7 +251,6 @@ export default defineComponent({
     };
     
     return {
-      isolateSinglePlayer,
       expanded,
       mainTableHeaders,
       computedSkillTableHeaders,
