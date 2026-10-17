@@ -696,29 +696,12 @@ func (a *Aggregator) processCombatAction(p *packet.GamePacket) {
 		a.updateTimestamps(sub.EntityId, p.At)
 
 		// CRITICAL SCOPE FIX: Always declare casterID immediately before using it in any sub-routes
-		casterID := attackerId
 		if sub.Hit.AttackerId > 0 {
 			casterID = sub.Hit.AttackerId
 		}
 
 		// Check if the entity RECEIVING the packet is a Player Character (Support Mode)
 		if _, isTargetAPlayer := playerCache.Get(sub.EntityId); isTargetAPlayer {
-						
-			// Map out all specified supportive, protective, astrological, and awakened healing skills
-			isSupportHealSkill := attackSkillId == 30006 || // Healing
-				attackSkillId == 30008 ||                   // Party Healing
-				attackSkillId == 59004 ||                   // Pulse of Purification
-				attackSkillId == 59000 ||                   // Hands of Restoration
-				attackSkillId == 59001 ||                   // Echoes of Salvation
-				attackSkillId == 59006 ||                   // Blessing of Protection
-				attackSkillId == 59002 ||                   // Voice of Vitality
-				attackSkillId == 59003 ||                   // Resonant Litany
-				attackSkillId == 27204 ||                   // Orbital Pulse
-				attackSkillId == 27205 ||                   // Starlight Veil
-				attackSkillId == 27206 ||                   // Gravity Well
-				attackSkillId == 27201 ||                   // Nova Blast
-				attackSkillId == 30401 ||                   // Spirit Wand Awakening
-				attackSkillId == 35121                      // Spirit Healing Wand Awakening Alternate
 			
 					// ROUTE A: Process supportive party healing metrics cleanly
 		if sub.Hit != nil && sub.Hit.Damage < 0 && (sub.Hit.Options&1) != 0 { 
