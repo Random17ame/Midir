@@ -718,7 +718,6 @@ func (sm *SessionManager) MigrateSession(sessionID string) error {
 			OverallHealing: pstat.OverallHealing,
 			HealingByTarget: pstat.HealingByTarget,
 		})
-		totalPartyHealing += pstat.OverallHealing.TotalDamage
 		
 		for tID, tBreakdown := range pstat.DamageByTarget {
 			targetDamageMap[tID] += tBreakdown.TotalDamage
