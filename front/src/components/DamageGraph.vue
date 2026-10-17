@@ -42,6 +42,13 @@
       </div>
       <div style="height: 500px" class="chart-wrapper">
         <LineChart :data="chartData" :options="chartOptions" />
+            <!-- Render scatterplot only when single player isolation is achieved -->
+    <DamageScatterChart 
+      v-if="isolatedPlayer" 
+      :playerStats="isolatedPlayer.stats"
+      :playerColor="isolatedPlayer.color"
+    />
+
       </div>
       <div v-if="selectedTargetConditions" class="mt-4">
           <ConditionTimeline 
