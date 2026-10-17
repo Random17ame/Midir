@@ -203,10 +203,11 @@ func (sm *SessionManager) SaveLiveSession(name string) error {
 				Name:            pstat.Name,
 				DPS:             pstat.OverallStats.DPS,
 				ArcanaName:      pstat.TalentName,
-				ArcanaIcon:      "", 
+				ArcanaIcon:      "",
 				TotalDamage:     pstat.OverallStats.TotalDamage,
 				OverallHealing:  pstat.OverallHealing,
 				HealingByTarget: pstat.HealingByTarget,
+				SkillUses:       pstat.SkillUses, // <-- Added to carry timelines into history!
 			})
 			
 			// Accumulate raw player healing into the unified party pool sum safely
