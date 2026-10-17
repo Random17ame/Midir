@@ -592,8 +592,24 @@ export default defineComponent({
         }
         return fightSummary.targets[selectedTargetId.value]?.conditions;
     });
-
+                
+    // Track if exactly one player is visible to toggle the scatterplot view
+    const isolatedPlayer = computed(() => {
+      const allPlayers = Object.values(fightSummary.players);
+      // Filter players that are NOT hidden in your global store Set
+      const visible = allPlayers.filter(p => !hiddenPlayers.has(p.id) && !globalHideMode.value);
+      
+      if (visible.length === 1) {
+        const player = visible[0];
+        return {
+          stats: player,
+          color: getClassColor(player.talentName, player.talentColor) || getMabiNameColor(player.name)
+        };
+      }
+      return null;
+    });
     return {
+      isolatedPlayer,
       chartData,
       chartOptions,
       selectedTargetConditions,
