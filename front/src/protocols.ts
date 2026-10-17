@@ -62,6 +62,7 @@ export interface PlayerStats {
   overallHealing: DamageBreakdown;
   healingByTarget: { [targetID: string]: DamageBreakdown};
   damageByTarget: { [targetId: string]: DamageBreakdown };
+  skillUses?: any[];
   deaths?: number[];
 }
 
