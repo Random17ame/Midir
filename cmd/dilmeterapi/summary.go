@@ -86,6 +86,20 @@ type SkillUseEvent struct {
 	TargetID  uint64 // 0 if used without target
 	Timestamp int64
 }
+// Replace your singular event struct with a secondary grouped layout
+type SkillGroupEvent struct {
+	Timestamp int64           `json:"timestamp"` // Relative fight second (e.g., 14)
+	TotalDmg  uint64          `json:"totalDmg"`  // Summed damage during this second
+	Skills    []SkillHitMeta  `json:"skills"`    // List of all unique skills inside this second
+}
+
+type SkillHitMeta struct {
+	SkillID   uint16 `json:"skillId"`
+	HitCount  uint32 `json:"hitCount"`
+	Damage    uint64 `json:"damage"`
+	MaxDamage uint64 `json:"maxDamage"`
+	CritCount uint32 `json:"critCount"`
+}
 
 // PlayerStats is now more detailed.
 type PlayerStats struct {
