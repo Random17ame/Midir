@@ -60,6 +60,10 @@ export interface PlayerStats {
   missingAppearPacket: boolean; // NEW: Cache warning flag
   overallStats: DamageBreakdown;
   overallHealing: DamageBreakdown;
+  veilCurrent?: number;
+  veilPeak?: number;
+  veilDmr?: number;
+  veilPeakDmr?: number;
   healingByTarget: { [targetID: string]: DamageBreakdown};
   damageByTarget: { [targetId: string]: DamageBreakdown };
   skillUses?: any[];

@@ -51,23 +51,27 @@
       </div>
     </template>
 
-    <template v-slot:[`item.overallHealing.dps`]="{ item }">
+    <template v-slot:[`item.largestHeal`]="{ item }">
       <div class="text-right font-weight-bold">
-        {{ formatNumber(item.overallHealing?.dps) }} HPS
+        {{ item.largestHeal > 0 ? formatNumber(item.largestHeal) : "—" }}
       </div>
     </template>
 
     <!-- Overshield Volume Column Row Display -->
     <template v-slot:[`item.overallHealing.overshieldProvided`]="{ item }">
       <div class="text-right font-weight-bold text-light-green-accent-3">
-        {{ formatAbbreviated(item.overallHealing?.overshieldProvided || 0) }}
+        {{ item.veilPeak > 0 ? formatAbbreviated(item.overallHealing?.overshieldProvided || 0) : '—' }}
       </div>
     </template>
 
-    <template v-slot:[`item.overallHealing.critRate`]="{ item }">
-      <div class="text-center font-weight-bold text-amber">
-        {{ (item.overallHealing?.critRate || 0).toFixed(1) }}%
-      </div>
+    <!-- Condition 999 Veil of Life properties: DMR is a percentage, not additive healing. -->
+    <template v-slot:[`item.veilDmr`]='{ item }'>
+      <div class="text-right"><template v-if="item.veilPeak > 0">{{ Number(item.veilDmr || 0).toFixed(2) }}% <span class="text-caption text-grey">(peak {{ Number(item.veilPeakDmr || 0).toFixed(2) }}%)</span></template>
+        <span v-else class="text-grey">—</span></div>
+    </template>
+
+    <template v-slot:[`item.veilPeak`]='{ item }'>
+      <div class="text-right">{{ item.veilPeak > 0 ? formatNumber(item.veilPeak) : '—' }}</div>
     </template>
 
     <!-- Expanded Skills Dropdown Section -->
@@ -80,7 +84,7 @@
             density="compact"
             :items-per-page="-1"
             hide-default-footer
-            class="ma-2 bg-surface-variant rounded-sm elevation-0"
+            class="ma-2 healing-skills-table rounded-sm elevation-0"
           >
             <template v-slot:[`item.skillName`]="{ item: skillItem }">
               <div class="d-flex align-center px-2 py-1">
@@ -96,31 +100,24 @@
               </div>
             </template>
 
-            <template v-slot:[`item.uses`]="{ item: skillItem }">
-              <div class="text-right font-weight-medium">{{ formatNumber(skillItem.uses) }}</div>
-            </template>
-
             <template v-slot:[`item.totalDamage`]="{ item: skillItem }">
-              <div class="text-right font-weight-bold">{{ formatNumber(skillItem.totalDamage) }}</div>
+              <div class="stat-bar text-right font-weight-bold" :style="{ 'background-image': getSkillCombinedGradient(item.overallHealing, skillItem) }">
+                {{ skillItem.totalDamage > 0 ? formatNumber(skillItem.totalDamage) : '—' }}
+              </div>
             </template>
 
-            <template v-slot:[`item.dps`]="{ item: skillItem }">
+            <template v-slot:[`item.maxDamage`]="{ item: skillItem }">
               <div class="text-right font-weight-bold">
-                {{ currentEncounterDuration > 0 ? formatNumber(skillItem.totalDamage / currentEncounterDuration) : '0' }}
+                {{ (skillItem.maxDamage || 0) > 0 ? formatNumber(skillItem.maxDamage) : '—' }}
               </div>
             </template>
 
             <template v-slot:[`item.overshieldProvided`]="{ item: skillItem }">
-              <div class="text-right font-weight-bold text-light-green-accent-3">
-                {{ formatNumber(skillItem.overshieldProvided || 0) }}
+              <div class="stat-bar text-right font-weight-bold text-light-green-accent-3" :style="{ 'background-image': getSkillCombinedGradient(item.overallHealing, skillItem) }">
+                {{ (skillItem.overshieldProvided || 0) > 0 ? formatNumber(skillItem.overshieldProvided || 0) : '—' }}
               </div>
             </template>
 
-            <template v-slot:[`item.critRate`]="{ item: skillItem }">
-              <div class="text-center font-weight-bold">
-                {{ skillItem.count > 0 ? ((skillItem.critCount / skillItem.count) * 100).toFixed(1) : '0.0' }}%
-              </div>
-            </template>
           </v-data-table>
         </td>
       </tr>
@@ -129,7 +126,7 @@
 </template>
 
 <!-- Experimental Healing Done: shows known healing and anonymous fallback.
-     Effective HP restoration and overshield attribution need additional validation. -->
+     Condition 999 provides observed Veil capacity and DMR; effective restoration needs validation. -->
 <script lang="ts">
 import { defineComponent, ref, computed, inject, watch } from "vue";
 import { fightSummary, activeSessionId, selectedTargetId, hiddenPlayers, globalHideMode, setAllHiddenPlayers, showClassColorsForVisiblePlayers } from "@/store";
@@ -150,19 +147,18 @@ export default defineComponent({
       { title: "Hide", key: "isHidden", sortable: false, width: "1%" },
       { title: "Character", key: "name", sortable: true, width: "20%" },
       { title: "Healing Contribution", key: "overallHealing.totalDamage", sortable: true, align: "end" as const, width: "35%" },
-      { title: "HPS", key: "overallHealing.dps", sortable: true, align: "end" as const, width: "20%" },
-      { title: "Overshields Provided", key: "overallHealing.overshieldProvided", sortable: true, align: "end" as const, width: "20%" },
-      { title: "Crit %", key: "overallHealing.critRate", sortable: true, align: "center" as const, width: "15%" },
+      { title: "Largest Heal", key: "largestHeal", sortable: true, align: "end" as const },
+      { title: "Veil Gained", key: "overallHealing.overshieldProvided", sortable: true, align: "end" as const, width: "20%" },
+      { title: "Veil Peak", key: "veilPeak", sortable: true, align: "end" as const },
+      { title: "Veil DMR", key: "veilDmr", sortable: true, align: "end" as const },
       { title: "", key: "data-table-expand", width: "4%" },
     ]);
 
     const computedSkillTableHeaders = computed(() => [
       { title: "Skill", key: "skillName", sortable: true, width: "200px" },
-      { title: "Uses", key: "uses", sortable: true, align: "end" as const },
       { title: "Total Healed", key: "totalDamage", sortable: true, align: "end" as const },
-      { title: "HPS", key: "dps", sortable: true, align: "end" as const },
-      { title: "Overshield", key: "overshieldProvided", sortable: true, align: "end" as const },
-      { title: "Crit %", key: "critRate", sortable: true, align: "center" as const }
+      { title: "Largest Heal", key: "maxDamage", sortable: true, align: "end" as const },
+      { title: "Veil Gained", key: "overshieldProvided", sortable: true, align: "end" as const }
     ]);
 
     const formatNumber = (num: number | undefined | null): string => {
@@ -187,6 +183,8 @@ export default defineComponent({
         .map((p: any) => ({
           id: p.id,
           name: p.name,
+          veilDmr: p.veilDmr, veilPeakDmr: p.veilPeakDmr, veilPeak: p.veilPeak || 0,
+          largestHeal: Math.max(0, ...Object.values(p.overallHealing?.skills || {}).map((sk: any) => Number(sk?.maxDamage || 0))),
           // Older captures may use an entity ID as the fallback name.
           overallHealing: p.overallHealing || { totalDamage: 0, hitCount: 0, critCount: 0, dps: 0, overshieldProvided: 0, critRate: 0, skills: {} },
           healingByTarget: p.healingByTarget || {}
@@ -204,7 +202,7 @@ export default defineComponent({
           id: "misc-anonymous-healing",
           name: "Misc. Anonymous Healing",
           overallHealing: { totalDamage: 0, hitCount: 0, critCount: 0, dps: 0, overshieldProvided: 0, critRate: 0, skills: {} },
-          healingByTarget: {}
+          healingByTarget: {}, largestHeal: 0
         };
         for (const row of anonymousRows) {
           const dst = combined.overallHealing;
@@ -229,6 +227,7 @@ export default defineComponent({
             dst.skills[skillKey] = current;
           }
         }
+        combined.largestHeal = Math.max(0, ...Object.values(combined.overallHealing.skills).map((sk: any) => Number(sk?.maxDamage || 0)));
         const duration = Number(fightSummary?.encounterDuration || 0);
         combined.overallHealing.dps = duration > 0 ? combined.overallHealing.totalDamage / duration : 0;
         combined.overallHealing.critRate = combined.overallHealing.hitCount > 0 ? (combined.overallHealing.critCount / combined.overallHealing.hitCount) * 100 : 0;
@@ -251,6 +250,7 @@ export default defineComponent({
     });
 
     const getSkillName = (skillId: number): string => {
+      if (skillId === 0) return "Uncategorized Healing";
       if (skillId === 9999) return "Pets";
       return skillNameMap.value?.[skillId]?.name || `Unknown Skill: ${skillId}`;
     };
@@ -261,36 +261,35 @@ export default defineComponent({
 
     const getSkillBreakdown = (overallHealing: any): SkillStats[] => {
       if (!overallHealing?.skills) return [];
-      return (Object.values(overallHealing.skills) as SkillStats[]).filter((skill: SkillStats) => Number(skill.id) > 0);
+      return (Object.values(overallHealing.skills) as SkillStats[]);
     };
-    
-        // Goal 2: Stacked Progress Bar Color Engine (Deep Burgundy + Neon Green)
+
+    // Healing and Veil are independently normalized for visual balance, then
+    // displayed as adjacent burgundy/green segments in one combined bar.
+    const getSkillPercent = (healing: any, skill: any, metric: 'totalDamage' | 'overshieldProvided'): number => {
+      const values = Object.values(healing?.skills || {}) as any[];
+      const largest = Math.max(0, ...values.map(v => Number(v?.[metric] || 0)));
+      return largest > 0 ? Math.min(100, Math.max(0, Number(skill?.[metric] || 0) / largest * 100)) : 0;
+    };
+    const getSkillCombinedGradient = (healing: any, skill: any): string => {
+      const h = getSkillPercent(healing, skill, 'totalDamage');
+      const v = getSkillPercent(healing, skill, 'overshieldProvided');
+      const total = h + v;
+      if (!total) return 'none';
+      const extent = Math.max(h, v); // Bar length anchored to stronger category.
+      const burgundy = extent * h / total;
+      return `linear-gradient(90deg, rgba(124,43,64,.84) 0% ${burgundy}%, rgba(40,170,87,.82) ${burgundy}% ${extent}%, transparent ${extent}%)`;
+    };
     const getRowProps = ({ item }: { item: any }) => {
       const players = playerDisplayData.value;
-      if (!players || players.length === 0) return { class: "character-row" };
-      
-      // Calculate scaling relative to the absolute top support throughput player
-      const topHealer = players[0];
-      const maxPool = (topHealer.overallHealing?.totalDamage || 0) + (topHealer.overallHealing?.overshieldProvided || 0);
-      if (maxPool <= 0) return { class: "character-row" };
-
-      const activeHeals = item.overallHealing?.totalDamage || 0;
-      const shields = item.overallHealing?.overshieldProvided || 0;
-
-      const healPercentage = (activeHeals / maxPool) * 100;
-      const shieldPercentage = (shields / maxPool) * 100;
-
-      return {
+      const maxHeal = Math.max(0, ...players.map((p: any) => Number(p.overallHealing?.totalDamage || 0)));
+      const maxVeil = Math.max(0, ...players.map((p: any) => Number(p.overallHealing?.overshieldProvided || 0)));
+      const h = maxHeal > 0 ? Number(item.overallHealing?.totalDamage || 0) / maxHeal : 0;
+      const v = maxVeil > 0 ? Number(item.overallHealing?.overshieldProvided || 0) / maxVeil : 0;
+      const extent = Math.max(h, v) * 100, split = h + v > 0 ? extent * h / (h + v) : 0;
+    return {
         class: "character-row",
-        style: {
-          background: `linear-gradient(to right, 
-            rgba(89, 38, 38, 0.85) 0%, 
-            rgba(89, 38, 38, 0.85) ${healPercentage}%, 
-            rgba(57, 255, 20, 0.85) ${healPercentage}%, 
-            rgba(57, 255, 20, 0.85) ${healPercentage + shieldPercentage}%, 
-            transparent ${healPercentage + shieldPercentage}% 100%)`,
-          backgroundClip: 'padding-box'
-        }
+        style: { background: `linear-gradient(to right, rgba(124, 43, 64, .75) 0% ${split}%, rgba(40, 170, 87, .7) ${split}% ${extent}%, transparent ${extent}%)` }
       };
     };
     
@@ -306,6 +305,8 @@ export default defineComponent({
       getSkillName,
       getSkillImageSrc,
       getSkillBreakdown,
+      getSkillPercent,
+      getSkillCombinedGradient,
       getRowProps,
       getPlayerColor,
       toggleHiddenPlayer,
@@ -354,5 +355,6 @@ export default defineComponent({
   border-top-right-radius: 6px !important; 
   border-bottom-right-radius: 6px !important; 
 }
+/* Side-by-side burgundy/green skill bars; matching fill in each value column. */
+.stat-bar { min-width: 90px; padding: 7px 10px; border-radius: 3px; background-repeat: no-repeat; }
 </style>
-

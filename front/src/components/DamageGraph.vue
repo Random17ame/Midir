@@ -1,5 +1,5 @@
 <template>
-  <div v-if="chartData.datasets.length > 0" class="graph-container">
+  <div v-if="chartData.labels.length > 0 || scatterPlayers.length > 0" class="graph-container">
     <div class="pa-4">
       <div class="d-flex ga-4 align-center mb-4 flex-wrap">
         <div v-if="conditionItems.length > 0" style="max-width: 320px; flex-grow: 1;">
@@ -50,7 +50,10 @@
 
       <!-- Primary Graph Box (Strict 500px) -->
       <div style="height: 500px" class="chart-wrapper mb-6">
-        <LineChart :data="chartData" :options="chartOptions" />
+        <LineChart v-if="chartData.datasets.length > 0" :data="chartData" :options="chartOptions" />
+        <div v-else class="d-flex align-center justify-center text-medium-emphasis h-100 text-center pa-4">
+          All graph players are hidden. Use the player buttons in the scatter chart below to show them again.
+        </div>
       </div>
       
       <!-- Scatter plot is independent of the main graph's visible-player count. -->
@@ -77,7 +80,7 @@
   </div>
   <v-sheet v-else class="d-flex align-center justify-center rounded-lg" height="400" style="background: #0f172a; border: 1px solid rgba(255, 255, 255, 0.08)">
     <div class="text-h6 text-grey-darken-1">
-      Graph data is only available for saved sessions.
+      No graph or skill-hit data is available for this session.
     </div>
   </v-sheet>
 </template>

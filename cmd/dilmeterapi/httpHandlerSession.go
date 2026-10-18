@@ -485,6 +485,10 @@ func applySavedSupportAndSkillData(summary *FightSummary, saved *SessionSummaryD
 			current.OverallHealing = stored.OverallHealing
 			current.HealingByTarget = stored.HealingByTarget
 			current.OvershieldProvided = stored.OvershieldProvided
+			current.VeilCurrent = stored.VeilCurrent
+			current.VeilPeak = stored.VeilPeak
+			current.VeilDMR = stored.VeilDMR
+			current.VeilPeakDMR = stored.VeilPeakDMR
 		}
 		if len(stored.SkillUses) > 0 {
 			current.SkillUses = stored.SkillUses
@@ -1113,6 +1117,10 @@ func finalizeSummaryFromLog(
 		}
 		finalizedPstats.OverallHealing = pStats.OverallHealing
 		finalizedPstats.OvershieldProvided = pStats.OvershieldProvided
+		finalizedPstats.VeilCurrent = pStats.VeilCurrent
+		finalizedPstats.VeilPeak = pStats.VeilPeak
+		finalizedPstats.VeilDMR = pStats.VeilDMR
+		finalizedPstats.VeilPeakDMR = pStats.VeilPeakDMR
 		finalizedPstats.HealingByTarget = pStats.HealingByTarget
 
 		summary.Players[pStats.ID] = finalizedPstats

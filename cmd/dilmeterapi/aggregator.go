@@ -57,8 +57,22 @@ type Aggregator struct {
 	lastKnownHP map[uint64]TargetHPPoint
 	// Most recent healing-action caster for each target. Used only as a short-lived
 	// attribution hint for a following AdditionalHP (stat 31) increase.
-	lastHealingCaster   map[uint64]healingCasterHint
+	lastHealingCaster map[uint64]healingCasterHint
+	// Recent qualifying casts by Harmonic Saints, including untargeted actions.
+	// Used only to disambiguate AdditionalHP gains when multiple Saints are known.
+	recentShieldCasts   map[uint64]healingCasterHint
 	lastHealingCasterID uint64
+	lastHealingCasterAt int64
+	// Last observed Veil of Life state per recipient; refreshed by condition 999.
+	veilStates map[uint64]veilState
+}
+
+type veilState struct {
+	Capacity float32
+	DMR      float32
+	CasterID uint64
+	SkillID  uint16
+	Active   bool
 }
 
 type healingCasterHint struct {
@@ -74,13 +88,23 @@ const healingAttributionWindowSeconds int64 = 2
 // when a later AdditionalHP update arrives.
 func isOvershieldSkill(skillID uint16) bool {
 	switch skillID {
-	case 59001, // Hands of Restoration
-		59002, // Echoes of Salvation
+	case 59000, // Hands of Restoration
+		59001, // Echoes of Salvation
 		59003: // Resonant Litany
 		return true
 	default:
 		return false
 	}
+}
+
+// Known abilities capable of direct healing; other unclassified restorations
+// are retained as Uncategorized Healing or Misc. Anonymous Healing.
+func isKnownHealingSkill(id uint16) bool {
+	switch id {
+	case 30006, 30008, 59000, 59001, 59002, 59003, 59004, 59006, 27200, 27201, 27204, 27205, 27206, 35121:
+		return true
+	}
+	return false
 }
 
 // NewAggregator creates and initializes a new Aggregator.
@@ -109,6 +133,8 @@ func NewAggregator() *Aggregator {
 		targetPresenceIntervals: make(map[uint64][]PresenceInterval),
 		lastKnownHP:             make(map[uint64]TargetHPPoint),
 		lastHealingCaster:       make(map[uint64]healingCasterHint),
+		veilStates:              make(map[uint64]veilState),
+		recentShieldCasts:       make(map[uint64]healingCasterHint),
 	}
 }
 
@@ -564,32 +590,9 @@ func (a *Aggregator) processPublicStatUpdate(p *packet.GamePacket) {
 		baseChanged = true
 	}
 	if val, ok := statUpdate.Stats[31]; ok {
-		// Stat 31 is the current additional-health pool, not a healing event.
-		// Attribute only positive deltas that follow one of the three skills
-		// known to provide overshield. Self-casts work naturally because the
-		// caster and recipient IDs are the same; never guess a caster otherwise.
-		if val > entity.AdditionalHP {
-			shieldDelta := val - entity.AdditionalHP
-			targetID := statUpdate.EntityId
-			targetIdStr := strconv.FormatUint(targetID, 10)
-			hint := a.lastHealingCaster[targetID]
-			casterID := uint64(0)
-			age := p.At.Unix() - hint.At
-			if hint.CasterID != 0 && isOvershieldSkill(hint.SkillID) && age >= 0 && age <= healingAttributionWindowSeconds {
-				casterID = hint.CasterID
-			}
-			if casterID != 0 {
-				if sourceCaster := a.getOrCreatePlayerStatsFromCache(casterID); sourceCaster != nil {
-					sourceCaster.OvershieldProvided += shieldDelta
-					targetBreakdown, exists := sourceCaster.HealingByTarget[targetIdStr]
-					if !exists {
-						targetBreakdown = newDamageBreakdown()
-					}
-					targetBreakdown.OvershieldProvided += shieldDelta
-					sourceCaster.HealingByTarget[targetIdStr] = targetBreakdown
-				}
-			}
-		}
+		// AdditionalHP is NOT Veil of Life. Its meaning is still being investigated.
+		// Never count changes in stat 31 as shield generation or healing.
+
 		entity.AdditionalHP = val
 		bonusChanged = true
 	}
@@ -619,6 +622,109 @@ func (a *Aggregator) GetEntityHP(entityID uint64) (currentHp, baseHp, additional
 	return entity.CurrentHP, entity.BaseHP, entity.AdditionalHP, entity.MaxHP, true
 }
 
+// observeVeilOfLife processes condition 999 while the aggregator mutex is held.
+// A reduction is consumption/replacement, NOT negative healing or negative
+// generation. Attribution is separate from measuring the shield state.
+func (a *Aggregator) observeVeilOfLife(p *packet.CharacterConditionPacket, at time.Time) {
+	if p.Id == 0 {
+		return
+	}
+	if recipient, ok := playerCache.Get(p.Id); !ok || recipient == nil {
+		return
+	}
+	previous := a.veilStates[p.Id]
+	if !p.IsEnable {
+		previous.Active = false
+		previous.Capacity = 0
+		a.veilStates[p.Id] = previous
+		if stats := a.getOrCreatePlayerStatsFromCache(previous.CasterID); stats != nil {
+			stats.VeilCurrent = 0
+		}
+		return
+	}
+	values := ParseMabinogiMetadata(p.MetaData)
+	capacity, hasCapacity := values["SBBV"]
+	dmr, hasDMR := values["SBBDDR"]
+	if !hasCapacity || capacity < 0 || capacity > 100000000 {
+		return
+	}
+	// Determine source, preferring the condition's explicit attacker.
+	casterID := p.AttackerId
+	if casterID != 0 {
+		if _, ok := playerCache.Get(casterID); !ok {
+			casterID = 0
+		}
+	}
+	if casterID == 0 && previous.Active {
+		casterID = previous.CasterID
+	}
+	if casterID == 0 {
+		casterID = a.overshieldCasterForTarget(p.Id, at.Unix())
+	}
+	skillID := uint16(0)
+	if casterID != 0 {
+		if hint := a.lastHealingCaster[p.Id]; hint.CasterID == casterID && isOvershieldSkill(hint.SkillID) && at.Unix() >= hint.At && at.Unix()-hint.At <= healingAttributionWindowSeconds {
+			skillID = hint.SkillID
+		} else if hint := a.recentShieldCasts[casterID]; isOvershieldSkill(hint.SkillID) && at.Unix() >= hint.At && at.Unix()-hint.At <= healingAttributionWindowSeconds {
+			skillID = hint.SkillID
+		}
+	}
+	if skillID == 0 && previous.Active && previous.CasterID == casterID {
+		skillID = previous.SkillID
+	}
+	delta := capacity
+	if previous.Active {
+		delta -= previous.Capacity
+	}
+	if delta < 0 {
+		delta = 0
+	}
+	state := veilState{Capacity: capacity, DMR: previous.DMR, CasterID: casterID, SkillID: skillID, Active: true}
+	if hasDMR && dmr >= 0 && dmr <= 1 {
+		state.DMR = dmr
+	}
+	a.veilStates[p.Id] = state
+	if casterID == 0 {
+		return
+	}
+	stats := a.getOrCreatePlayerStatsFromCache(casterID)
+	if stats == nil {
+		return
+	}
+	stats.VeilCurrent = capacity
+	if capacity > stats.VeilPeak {
+		stats.VeilPeak = capacity
+	}
+	stats.VeilDMR = state.DMR * 100
+	if stats.VeilDMR > stats.VeilPeakDMR {
+		stats.VeilPeakDMR = stats.VeilDMR
+	}
+	if delta <= 0 {
+		return
+	}
+	stats.OvershieldProvided += delta
+	targetKey := strconv.FormatUint(p.Id, 10)
+	breakdown := stats.HealingByTarget[targetKey]
+	if breakdown.Skills == nil {
+		breakdown = newDamageBreakdown()
+	}
+	breakdown.OvershieldProvided += delta
+	stats.HealingByTarget[targetKey] = breakdown
+	if skillID != 0 {
+		// A valid recent cast identifies the skill. Otherwise the shield is
+		// attributed to the player without inventing a skill assignment.
+		skill := stats.OverallHealing.Skills[skillID]
+		skill.ID = skillID
+		skill.OvershieldProvided += delta
+		stats.OverallHealing.Skills[skillID] = skill
+		skill = breakdown.Skills[skillID]
+		skill.ID = skillID
+		skill.OvershieldProvided += delta
+		breakdown.Skills[skillID] = skill
+		stats.HealingByTarget[targetKey] = breakdown
+	}
+}
+
 func (a *Aggregator) processCharacterCondition(p *packet.CharacterConditionPacket, at time.Time) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -629,6 +735,14 @@ func (a *Aggregator) processCharacterCondition(p *packet.CharacterConditionPacke
 	}
 	if a.playerConditionHistory[p.Id] == nil {
 		a.playerConditionHistory[p.Id] = make(map[uint32][]ConditionInterval)
+	}
+
+	// Veil of Life: SBBDDR records mitigation as a fraction and SBBV
+	// appears to represent shield capacity. Both are derived from condition
+	// metadata, never HP stat 31. The shield counter is an *observed positive
+	// capacity delta*; refresh/stack semantics still need validation.
+	if p.CCId == 999 {
+		a.observeVeilOfLife(p, at)
 	}
 
 	if p.IsEnable {
@@ -823,11 +937,76 @@ func (a *Aggregator) processCombatAction(p *packet.GamePacket) {
 	}
 }
 
-// processOvershieldCasterHint retains skill-aware attribution for the separate
-// Overshield: AdditionalHP increases are attributed using short-lived caster hints;
-// this is heuristic and must not be mistaken for effective HP healing.
-// AdditionalHP stat update. Ordinary healing amounts are no longer inferred from
-// CombatActionPack; only the known shield skills can seed this short-lived hint.
+// harmonicSaintIDs returns only players with an identified Harmonic Saint arcana.
+// Unknown arcana cannot safely be counted, so callers should regard a sole
+// known Saint as a heuristic until all party talents are identified.
+func (a *Aggregator) harmonicSaintIDs() []uint64 {
+	saints := make([]uint64, 0, 2)
+	for id, name := range a.playerTalentNames {
+		if strings.EqualFold(strings.TrimSpace(name), "Harmonic Saint") {
+			// Only count Saints present in this encounter; playerCache is
+			// persistent and may contain characters no longer in the party.
+			if _, present := a.entityCache[id]; present {
+				saints = append(saints, id)
+			}
+		}
+	}
+	return saints
+}
+
+// overshieldCasterForTarget is called with a.mu held. This does not infer
+// a skill ID from the shield amount, and never attributes non-HS shield gains.
+func (a *Aggregator) overshieldCasterForTarget(targetID uint64, at int64) uint64 {
+	saints := a.harmonicSaintIDs()
+	if len(saints) == 0 {
+		return 0
+	}
+	isSaint := func(id uint64) bool {
+		for _, saint := range saints {
+			if saint == id {
+				return true
+			}
+		}
+		return false
+	}
+	fresh := func(h healingCasterHint) bool {
+		return h.CasterID != 0 && isOvershieldSkill(h.SkillID) &&
+			at >= h.At && at-h.At <= healingAttributionWindowSeconds && isSaint(h.CasterID)
+	}
+	if hint := a.lastHealingCaster[targetID]; fresh(hint) {
+		return hint.CasterID
+	}
+	// In a single-Saint party, no other known player can provide overshield.
+	if len(saints) == 1 {
+		return saints[0]
+	}
+
+	// For multiple Saints, use the most recent observed qualifying activation.
+	// Equal-second timestamps from different casters are ambiguous: leave
+	// unassigned rather than relying on nondeterministic map iteration.
+	var best uint64
+	var bestAt int64 = -1
+	ambiguous := false
+	for _, saint := range saints {
+		hint := a.recentShieldCasts[saint]
+		if !fresh(hint) {
+			continue
+		}
+		if hint.At > bestAt {
+			best, bestAt, ambiguous = saint, hint.At, false
+		} else if hint.At == bestAt && saint != best {
+			ambiguous = true
+		}
+	}
+	if ambiguous {
+		return 0
+	}
+	return best
+}
+
+// processOvershieldCasterHint preserves short-lived cast evidence for healing
+// and shield attribution. A recent cast is only a candidate, never proof that
+// an HP recovery packet came from it. AdditionalHP is unrelated to Veil.
 func (a *Aggregator) processOvershieldCasterHint(p *packet.GamePacket) {
 	pack, err := packet.ParseCombatActionPackPacket(p)
 	if err != nil {
@@ -841,12 +1020,17 @@ func (a *Aggregator) processOvershieldCasterHint(p *packet.GamePacket) {
 			break
 		}
 	}
-	if casterID == 0 || !isOvershieldSkill(skillID) {
+	if casterID == 0 || !isKnownHealingSkill(skillID) {
 		return
 	}
 	casterID, skillID = a.resolveAttackerAndSkill(casterID, skillID)
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	// A qualifying skill activation is a useful clue even when the cast
+	// has no direct damage hit or target (e.g. support-skill effects).
+	if isOvershieldSkill(skillID) {
+		a.recentShieldCasts[casterID] = healingCasterHint{CasterID: casterID, SkillID: skillID, At: p.At.Unix()}
+	}
 	for _, sub := range pack.SubPackets {
 		if sub.Hit != nil && sub.EntityId != 0 {
 			a.lastHealingCaster[sub.EntityId] = healingCasterHint{CasterID: casterID, SkillID: skillID, At: p.At.Unix()}
@@ -872,19 +1056,49 @@ func (a *Aggregator) processDedicatedHealingPacket(p *packet.GamePacket) {
 	case 0x19, 0x28:
 		if heal.EntityID != 0 {
 			a.lastHealingCasterID = heal.EntityID
+			a.lastHealingCasterAt = p.At.Unix()
 		}
 		return
 	case 0x0A:
+		// Healing opcode is also sent for enemies and newly spawned entities.
+		// Never interpret an enemy's initial HP as a player heal.
+		if heal.EntityID == 0 {
+			return
+		}
+		if recipient, ok := playerCache.Get(heal.EntityID); !ok || recipient == nil || recipient.Name == "" {
+			return
+		}
+		// Healing sanity check: compare each healing packet against the actual
+		// recipient's known ordinary maximum HP (BaseHP + AdditionalHP). Stat 31
+		// contributes to ordinary HP capacity; it is NOT a Veil shield value.
+		// The 2x allowance tolerates restoration after negative HP without
+		// accidentally accepting multi-million HP initialization events.
+		// Never cap Veil of Life capacity; that uses condition 999 separately.
 		if heal.Amount == 0 {
 			return
 		}
-		// Preserve healing even when the caster packet was missing or the caster
-		// cannot be resolved to a character. The UI folds numeric/unknown sources
-		// into one friendly "Misc. Anonymous Healing" row.
+		const fallbackMaximumHeal = 100000 // Until we have a valid HP observation.
+		maximumHeal := float32(fallbackMaximumHeal)
+		if entity := a.entityCache[heal.EntityID]; entity != nil && entity.MaxHP > 0 && entity.MaxHP < 100000000 {
+			maximumHeal = 2 * entity.MaxHP
+		}
+		if float32(heal.Amount) > maximumHeal {
+			return
+		}
+		// Prefer a resolved packet caster. A fallback to the sole known Harmonic
+		// Saint is allowed ONLY with a recent target-specific recognized skill
+		// hint, never for potions, regen, spawn packets, or unknown sources.
 		var stats *PlayerStats
-		if a.lastHealingCasterID != 0 {
+		if a.lastHealingCasterID != 0 && p.At.Unix() >= a.lastHealingCasterAt && p.At.Unix()-a.lastHealingCasterAt <= 2 {
 			if playerInfo, ok := playerCache.Get(a.lastHealingCasterID); ok && playerInfo != nil && playerInfo.Name != "" {
 				stats = a.getOrCreatePlayerStats(playerInfo)
+			}
+		}
+		hint, hasHint := a.lastHealingCaster[heal.EntityID]
+		freshSkill := hasHint && isKnownHealingSkill(hint.SkillID) && p.At.Unix() >= hint.At && p.At.Unix()-hint.At <= healingAttributionWindowSeconds
+		if stats == nil && freshSkill {
+			if saints := a.harmonicSaintIDs(); len(saints) == 1 {
+				stats = a.getOrCreatePlayerStatsFromCache(saints[0])
 			}
 		}
 		if stats == nil {
@@ -902,15 +1116,20 @@ func (a *Aggregator) processDedicatedHealingPacket(p *packet.GamePacket) {
 		targetID := heal.EntityID
 		targetKey := strconv.FormatUint(targetID, 10)
 		amount := float32(heal.Amount)
-		// Skill ID is unavailable in this opcode's single-heal result packet;
-		// retain the amount under skill 0 rather than silently dropping healing.
+		// The heal-result opcode has no explicit skill. Attribute only when a
+		// recent targeted skill candidate agrees with the identified caster;
+		// other confirmed healing stays skill 0 (Uncategorized Healing).
+		skillID := uint16(0)
+		if freshSkill && (stats.ID == strconv.FormatUint(hint.CasterID, 10) || (len(a.harmonicSaintIDs()) == 1 && stats.ID == strconv.FormatUint(a.harmonicSaintIDs()[0], 10))) {
+			skillID = hint.SkillID
+		}
 		temp := &packet.CombatActionPacket{Hit: &packet.CombatActionPacketHitInfo{Damage: amount}}
-		a.updateHealingBreakdown(&stats.OverallHealing, temp, 0)
+		a.updateHealingBreakdown(&stats.OverallHealing, temp, skillID)
 		targetBreakdown := stats.HealingByTarget[targetKey]
 		if targetBreakdown.Skills == nil {
 			targetBreakdown = newDamageBreakdown()
 		}
-		a.updateHealingBreakdown(&targetBreakdown, temp, 0)
+		a.updateHealingBreakdown(&targetBreakdown, temp, skillID)
 		stats.HealingByTarget[targetKey] = targetBreakdown
 	}
 }
@@ -1105,7 +1324,11 @@ func (a *Aggregator) GetSummary() FightSummary {
 			MissingAppearPacket: !a.playerSeenAppear[playerID],
 			SkillUses:           pStats.SkillUses,
 			HealingSkills:       pStats.HealingSkills,      // Sync healing skill logs to frontend
-			OvershieldProvided:  pStats.OvershieldProvided, // Connect overshield metrics to broadcast
+			OvershieldProvided:  pStats.OvershieldProvided, // Condition 999 observed increases
+			VeilCurrent:         pStats.VeilCurrent,
+			VeilPeak:            pStats.VeilPeak,
+			VeilDMR:             pStats.VeilDMR,
+			VeilPeakDMR:         pStats.VeilPeakDMR,
 		}
 
 		// Finalize overall stats using the single overall encounter duration
@@ -1506,12 +1729,17 @@ func (a *Aggregator) Clear() {
 	}()
 
 	// SOFT CLEAR: Reset only the session metrics.
-	// Preserve: entityCache, playerTalents, playerTalentNames, playerTalentColors,
-	//           playerConditionActive, playerSeenAppear.
+	// Preserve: entityCache, playerConditionActive, playerSeenAppear.
+	// Arcana must be re-detected each session because players can switch Arcana.
 
 	a.playerStats = make(map[uint64]*PlayerStats)
+	// Session-specific Arcana: clear all three fields together so the first
+	// observed Arcana skill in this session can establish the current one.
+	// Do not discard entityCache: player identity/party presence still matters.
+	a.playerTalents = make(map[uint64]string)
+	a.playerTalentNames = make(map[uint64]string)
+	a.playerTalentColors = make(map[uint64]string)
 	// We keep entityCache to know who people are if they are still here
-	// We keep playerTalents/Names/Colors to know who people are if they are still here
 
 	a.damageTaken = make(map[uint64]*PlayerDamageTakenStats)
 	a.targetNames = make(map[uint64]string)
@@ -1532,7 +1760,10 @@ func (a *Aggregator) Clear() {
 	a.targetPresenceIntervals = make(map[uint64][]PresenceInterval)
 	a.lastKnownHP = make(map[uint64]TargetHPPoint)
 	a.lastHealingCaster = make(map[uint64]healingCasterHint)
+	a.recentShieldCasts = make(map[uint64]healingCasterHint)
 	a.lastHealingCasterID = 0
+	a.lastHealingCasterAt = 0
+	a.veilStates = make(map[uint64]veilState)
 
 	// Clear condition HISTORY, but keep ACTIVE conditions.
 	// This ensures that when the new session starts, we know they still have the buff,

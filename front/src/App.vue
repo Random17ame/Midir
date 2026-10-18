@@ -185,6 +185,7 @@ import DamageMeterView from "@/components/DamageMeterView.vue";
 import SettingsView from "@/components/SettingsView.vue";
 import {
   getSessionSummary,
+  getSessions,
   getLiveSummary,
   saveSession,
   clearBackendState,
@@ -251,6 +252,9 @@ export default defineComponent({
     };
 
     const clearSession = async () => {
+      // Clear the backend first: an API failure must never erase the only
+      // remaining live data from the UI.
+      await clearBackendState();
       selectedTargetId.value = "";
       Object.assign(fightSummary, {
         encounterDuration: 0,
@@ -260,13 +264,7 @@ export default defineComponent({
         damageTaken: {},
         graphData: {},
       });
-
-      try {
-        await clearBackendState();
-        console.log("Backend state cleared.");
-      } catch (e) {
-        console.error("Failed to clear backend state:", e);
-      }
+      console.log("Backend state cleared.");
     };
 
     const isSaving = ref(false);
@@ -299,19 +297,29 @@ export default defineComponent({
     };
 
     const confirmSaveSession = async () => {
+      if (isSaving.value) return; // Enter and click must not submit twice.
       const name = saveSessionName.value.trim();
       if (!name) return;
-      
-      saveDialogVisible.value = false;
+
       isSaving.value = true;
       try {
+        // Session saves are destructive to the live backend. Verify the newly
+        // created archive is discoverable before clearing the live graph.
+        const before = await getSessions();
+        const previousIds = new Set(before.map((session) => session.id));
         await saveSession(name);
+        const after = await getSessions();
+        const saved = after.find((session) => !previousIds.has(session.id) && session.name === name);
+        if (!saved) {
+          throw new Error("Save request completed, but the new session is not visible in session history. Live display was not cleared; check the sessions folder before retrying.");
+        }
         await clearSession();
+        saveDialogVisible.value = false;
         appEvent.value.dispatchEvent(new CustomEvent("refresh-sessions"));
         alert(`Session "${name}" saved successfully.`);
       } catch (e) {
-        console.error("Failed to save session:", e);
-        alert(`Error saving session: ${e}`);
+        console.error("Failed to save or verify session:", e);
+        alert(`Unable to confirm session saved: ${e}`);
       } finally {
         isSaving.value = false;
       }

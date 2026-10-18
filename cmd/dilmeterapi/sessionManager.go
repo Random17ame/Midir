@@ -32,6 +32,10 @@ type SessionSummaryPlayer struct {
 	HealingByTarget    map[string]DamageBreakdown `json:"healingByTarget"`
 	SkillUses          []SkillGroupEvent          `json:"skillUses"`
 	OvershieldProvided float32                    `json:"overshieldProvided"`
+	VeilCurrent        float32                    `json:"veilCurrent,omitempty"`
+	VeilPeak           float32                    `json:"veilPeak,omitempty"`
+	VeilDMR            float32                    `json:"veilDmr,omitempty"`
+	VeilPeakDMR        float32                    `json:"veilPeakDmr,omitempty"`
 	TotalHealing       float32                    `json:"totalHealing"`
 }
 
@@ -214,6 +218,10 @@ func (sm *SessionManager) SaveLiveSession(name string) error {
 					HealingByTarget:    pstat.HealingByTarget,
 					SkillUses:          pstat.SkillUses,
 					OvershieldProvided: pstat.OvershieldProvided,
+					VeilCurrent:        pstat.VeilCurrent,
+					VeilPeak:           pstat.VeilPeak,
+					VeilDMR:            pstat.VeilDMR,
+					VeilPeakDMR:        pstat.VeilPeakDMR,
 					TotalHealing:       pstat.OverallHealing.TotalDamage,
 				})
 
@@ -320,6 +328,10 @@ func (sm *SessionManager) GetAllSessions() ([]*Session, error) {
 		logFile, err := os.Open(filepath.Join(sm.logDirectory, file.Name()))
 		if err == nil {
 			scanner := bufio.NewScanner(logFile)
+			// Saved summaries include skill-use arrays and can exceed Scanner's
+			// default 64 KiB token limit. Without this, successfully saved files
+			// may disappear from the session list.
+			scanner.Buffer(make([]byte, 64*1024), 32*1024*1024)
 			if scanner.Scan() {
 				var summaryEvent eventSessionSummary
 				if err := json.Unmarshal(scanner.Bytes(), &summaryEvent); err == nil && summaryEvent.EventId == eventIdSessionSummary {

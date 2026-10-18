@@ -71,16 +71,16 @@ type SkillStats struct {
 
 // DamageBreakdown now includes its own start and end times for precise DPS calculation.
 type DamageBreakdown struct {
-	TotalDamage float32                    `json:"totalDamage"`
-	HitCount    int                        `json:"hitCount"`
-	CritCount   int                        `json:"critCount"`
-	DPS         float32                    `json:"dps"`
-	CritRate    float32                    `json:"critRate"`
-	OvershieldProvided float32             `json:"overshieldProvided"`
-	StartTime   int64                      `json:"startTime,omitempty"` // NEW: Unix timestamp of the first hit
-	EndTime     int64                      `json:"endTime,omitempty"`   // NEW: Unix timestamp of the last hit
-	Skills      map[uint16]SkillStats      `json:"skills"`
-	Conditions  map[uint32]*ConditionStats `json:"conditions,omitempty"` // NEW: Condition uptime stats
+	TotalDamage        float32                    `json:"totalDamage"`
+	HitCount           int                        `json:"hitCount"`
+	CritCount          int                        `json:"critCount"`
+	DPS                float32                    `json:"dps"`
+	CritRate           float32                    `json:"critRate"`
+	OvershieldProvided float32                    `json:"overshieldProvided"`
+	StartTime          int64                      `json:"startTime,omitempty"` // NEW: Unix timestamp of the first hit
+	EndTime            int64                      `json:"endTime,omitempty"`   // NEW: Unix timestamp of the last hit
+	Skills             map[uint16]SkillStats      `json:"skills"`
+	Conditions         map[uint32]*ConditionStats `json:"conditions,omitempty"` // NEW: Condition uptime stats
 }
 
 type SkillUseEvent struct {
@@ -88,11 +88,12 @@ type SkillUseEvent struct {
 	TargetID  uint64 // 0 if used without target
 	Timestamp int64
 }
+
 // Replace your singular event struct with a secondary grouped layout
 type SkillGroupEvent struct {
-	Timestamp int64           `json:"timestamp"` // Relative fight second (e.g., 14)
-	TotalDmg  uint64          `json:"totalDmg"`  // Summed damage during this second
-	Skills    []SkillHitMeta  `json:"skills"`    // List of all unique skills inside this second
+	Timestamp int64          `json:"timestamp"` // Relative fight second (e.g., 14)
+	TotalDmg  uint64         `json:"totalDmg"`  // Summed damage during this second
+	Skills    []SkillHitMeta `json:"skills"`    // List of all unique skills inside this second
 }
 
 type SkillHitMeta struct {
@@ -114,10 +115,14 @@ type PlayerStats struct {
 	OverallStats        DamageBreakdown            `json:"overallStats"`
 	OverallHealing      DamageBreakdown            `json:"overallHealing"`
 	OvershieldProvided  float32                    `json:"overshieldProvided"`
+	VeilCurrent         float32                    `json:"veilCurrent,omitempty"`
+	VeilPeak            float32                    `json:"veilPeak,omitempty"`
+	VeilDMR             float32                    `json:"veilDmr,omitempty"`
+	VeilPeakDMR         float32                    `json:"veilPeakDmr,omitempty"`
 	HealingByTarget     map[string]DamageBreakdown `json:"healingByTarget"`
-	HealingSkills       map[uint16]SkillStats     `json:"healingSkills"`
+	HealingSkills       map[uint16]SkillStats      `json:"healingSkills"`
 	DamageByTarget      map[string]DamageBreakdown `json:"damageByTarget"` // Key is Target ID
-	SkillUses           []SkillGroupEvent            `json:"skillUses"`
+	SkillUses           []SkillGroupEvent          `json:"skillUses"`
 	Deaths              []int64                    `json:"deaths,omitempty"`
 }
 
@@ -173,20 +178,20 @@ type TargetStats struct {
 
 // NEW: EntityState represents an entity currently in the area.
 type EntityState struct {
-	ID         string                     `json:"id"`
-	Name       string                     `json:"name"`
-	RaceID     uint32                     `json:"raceId"`
-	RaceName   string                     `json:"raceName"`
-	Conditions map[uint32]ActiveCondition `json:"conditions,omitempty"`
-	CurrentHP  float32                    `json:"currentHp"`
-	MaxHP      float32                    `json:"maxHp"`
-	Category             string                     `json:"category"`
-	OwnerID              string                     `json:"ownerId,omitempty"`
-	OwnerName            string                     `json:"ownerName,omitempty"`
-	SecondaryOwnerID     string                     `json:"secondaryOwnerId,omitempty"`
-	SecondaryOwnerName   string                     `json:"secondaryOwnerName,omitempty"`
-	EntityType           uint8                      `json:"entityType"`
-	EntityTypeStr        string                     `json:"entityTypeStr,omitempty"`
+	ID                 string                     `json:"id"`
+	Name               string                     `json:"name"`
+	RaceID             uint32                     `json:"raceId"`
+	RaceName           string                     `json:"raceName"`
+	Conditions         map[uint32]ActiveCondition `json:"conditions,omitempty"`
+	CurrentHP          float32                    `json:"currentHp"`
+	MaxHP              float32                    `json:"maxHp"`
+	Category           string                     `json:"category"`
+	OwnerID            string                     `json:"ownerId,omitempty"`
+	OwnerName          string                     `json:"ownerName,omitempty"`
+	SecondaryOwnerID   string                     `json:"secondaryOwnerId,omitempty"`
+	SecondaryOwnerName string                     `json:"secondaryOwnerName,omitempty"`
+	EntityType         uint8                      `json:"entityType"`
+	EntityTypeStr      string                     `json:"entityTypeStr,omitempty"`
 }
 
 // FightSummary's EncounterDuration now represents the time from the first to last damage event.
@@ -199,7 +204,7 @@ type FightSummary struct {
 	Targets           map[string]TargetStats                 `json:"targets"`
 	DamageTaken       map[string]PlayerDamageTakenStats      `json:"damageTaken"`
 	GraphData         map[string]map[string][]GraphDataPoint `json:"graphData,omitempty"`
-	CurrentEntities   []EntityState                          `json:"currentEntities"` // NEW: List of entities currently in the area
+	CurrentEntities   []EntityState                          `json:"currentEntities"`      // NEW: List of entities currently in the area
 	PartyBuffs        []PartyBuff                            `json:"partyBuffs,omitempty"` // NEW: Computed party buff metrics
 }
 

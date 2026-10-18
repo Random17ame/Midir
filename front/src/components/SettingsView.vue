@@ -19,6 +19,8 @@
             <v-card variant="outlined" class="pa-4">
               <div class="text-h6 mb-2">Experimental features</div>
               <v-switch v-model="showHealingTab" color="primary" label="Show Healing Done tab" hint="Healing attribution and overshield statistics are still under investigation. Hidden by default; saved healing data is never deleted." persistent-hint />
+              <v-switch v-model="recordHealingDiagnostics" color="warning" label="Record healing diagnostics" hint="Experimental. Records timestamps, entity IDs, skill candidates and HP changes to a local healing-diagnostics-*.ndjson file. Turn off after testing; separate from saved sessions." persistent-hint @update:model-value="toggleHealingDiagnostics" />
+              <v-alert v-if="healingDiagnosticsError" type="warning" density="compact" class="mt-2">{{ healingDiagnosticsError }}</v-alert>
             </v-card>
           </v-window-item>
           <v-window-item value="history">
@@ -531,6 +533,22 @@ export default defineComponent({
   },
   setup() {
     const activeTab = ref("capture");
+    const recordHealingDiagnostics = ref(false);
+    const healingDiagnosticsError = ref("");
+    const toggleHealingDiagnostics = async (enabled: boolean | null) => {
+      try {
+        const response = await fetch("/api/state/healing-diagnostics", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ enabled: !!enabled }) });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        recordHealingDiagnostics.value = !!enabled;
+        healingDiagnosticsError.value = "";
+      } catch (error) {
+        recordHealingDiagnostics.value = !enabled;
+        healingDiagnosticsError.value = "Unable to change diagnostic recording. Check that the Midir backend is running.";
+      }
+    };
+    // Backend owns the recorder state; opening Settings reflects its actual status.
+    void fetch("/api/state/healing-diagnostics").then(r => r.json()).then(data => { recordHealingDiagnostics.value = !!data.enabled; }).catch(() => {});
+
     const historyFolderPicking = ref(false);
     const historyFolderError = ref("");
     const browseHistoryFolder = async () => {
@@ -848,6 +866,7 @@ export default defineComponent({
     };
 
     return {
+      recordHealingDiagnostics, healingDiagnosticsError, toggleHealingDiagnostics,
       activeTab,
       personalBestSessionLimit, personalBestHistoryFolder, historyFolderPicking, historyFolderError, browseHistoryFolder,
       showHealingTab,

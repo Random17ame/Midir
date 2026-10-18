@@ -490,10 +490,34 @@ func (t *eventPublisher) logPacketAsEvent(p *packet.GamePacket) {
 		// packet variants. Try the specific healing structure first; ordinary
 		// effect packets fall through to the existing parser below.
 		if heal, parseErr := packet.ParseHealingPacket(p); parseErr == nil {
+			// Diagnostic-only packet metadata. Do not assume a recent caster is correct.
+			healingDetails := map[string]interface{}{
+				"subtype": heal.Type, "entity_id": heal.EntityID, "raw_amount": heal.Amount,
+				"last_caster_candidate": t.lastHealingCasterID,
+			}
+			if heal.Type == 0x0A && heal.Amount > 0 {
+				for k, v := range healingDiagnostics.candidatesForHeal(p.At, heal.EntityID, heal.Amount) {
+					healingDetails[k] = v
+				}
+			}
+			healingDiagnostics.write(p.At, "healing_packet", healingDetails)
 			switch heal.Type {
 			case 0x19, 0x28:
 				t.lastHealingCasterID = heal.EntityID
 			case 0x0A:
+				// Mirror the live-healing validity checks before persisting an event.
+				// Non-player targets (e.g. Shard of Solace spawn HP) must not
+				// reappear as healing when the saved session is rebuilt.
+				if recipient, ok := playerCache.Get(heal.EntityID); !ok || recipient == nil || recipient.Name == "" {
+					break
+				}
+				maximumHeal := float32(100000)
+				if _, _, _, maxHP, exists := t.aggregator.GetEntityHP(heal.EntityID); exists && maxHP > 0 && maxHP < 100000000 {
+					maximumHeal = 2 * maxHP
+				}
+				if float32(heal.Amount) > maximumHeal {
+					break
+				}
 				if t.lastHealingCasterID != 0 && heal.Amount > 0 {
 					e := &eventDamage{
 						eventBase: eventBase{EventId: eventIdDamage, At: p.At.Unix(), Id: strconv.FormatUint(t.lastHealingCasterID, 10)},
@@ -734,6 +758,15 @@ func (t *eventPublisher) logPacketAsEvent(p *packet.GamePacket) {
 			}
 		}
 
+		// Capture candidate skill activity regardless of whether it dealt damage.
+		// Skill ID is a uint16 in this opcode and the target may be absent.
+		skillID := p.Msg[0].Data().(uint16)
+		if isHealingCandidateSkill(skillID) {
+			healingDiagnostics.noteSkill(p.At, p.Id, targetID, skillID)
+			healingDiagnostics.write(p.At, "healing_skill_activation", map[string]interface{}{
+				"caster_id": p.Id, "target_id": targetID, "skill_id": skillID, "opcode": p.Op,
+			})
+		}
 		t.lastCombatAt[p.Id] = p.At
 		if targetID != 0 {
 			t.lastCombatAt[targetID] = p.At
@@ -748,6 +781,16 @@ func (t *eventPublisher) logPacketAsEvent(p *packet.GamePacket) {
 
 		// Retrieve active HP in a thread-safe way from the aggregator
 		curHP, baseHP, additionalHP, maxHP, exists := t.aggregator.GetEntityHP(statPack.EntityId)
+		if exists {
+			// Diagnostic recorder is not throttled by the normal HP timeline logger.
+			entityType := "unknown"
+			if _, player := playerCache.Get(statPack.EntityId); player {
+				entityType = "player"
+			} else if t.aggregator.IsCombatTarget(statPack.EntityId) {
+				entityType = "enemy"
+			}
+			healingDiagnostics.observeHP(p.At, statPack.EntityId, curHP, baseHP, additionalHP, entityType)
+		}
 		if !exists {
 			// Skip logging if the entity is not currently tracked in the active entityCache
 			break

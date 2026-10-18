@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"net/http"
 
 	"github.com/Marcentus/Midir/packet"
@@ -13,6 +14,25 @@ func stateRouter(pub *eventPublisher, sm *SessionManager) http.Handler {
 	// CORRECTED: Pass the SessionManager to the handler.
 	r.Post("/clear", handleClearState(pub, sm))
 	r.Get("/summary", handleGetLiveSummary(pub))
+	// Opt-in diagnostics are separate from the saved-session event format.
+	r.Get("/healing-diagnostics", func(w http.ResponseWriter, r *http.Request) {
+		respondWithJSON(w, http.StatusOK, map[string]bool{"enabled": healingDiagnostics.isEnabled()})
+	})
+	r.Post("/healing-diagnostics", func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Enabled bool `json:"enabled"`
+		}
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1024)).Decode(&body); err != nil {
+			http.Error(w, "Invalid request", 400)
+			return
+		}
+		if err := healingDiagnostics.setEnabled(body.Enabled); err != nil {
+			http.Error(w, "Unable to open/close diagnostic file", 500)
+			return
+		}
+		respondWithJSON(w, http.StatusOK, map[string]bool{"enabled": body.Enabled})
+	})
+
 	return r
 }
 
