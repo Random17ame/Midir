@@ -1,3 +1,5 @@
+// Summary models bridge parsed events to live and saved analysis.
+// Preserve backward-compatible fields used by Ghost Runner, Death Flags and healing.
 package main
 
 // ConditionInterval represents a time range where a condition was active.
@@ -63,6 +65,7 @@ type SkillStats struct {
 	MaxDamage          float32 `json:"maxDamage"`
 	MaxDamageCrit      float32 `json:"maxDamageCrit"`
 	MaxDamageNonCrit   float32 `json:"maxDamageNonCrit"`
+	OvershieldProvided float32 `json:"overshieldProvided"`
 	Uses               int     `json:"uses"` // New skill usage count
 }
 
@@ -73,6 +76,7 @@ type DamageBreakdown struct {
 	CritCount   int                        `json:"critCount"`
 	DPS         float32                    `json:"dps"`
 	CritRate    float32                    `json:"critRate"`
+	OvershieldProvided float32             `json:"overshieldProvided"`
 	StartTime   int64                      `json:"startTime,omitempty"` // NEW: Unix timestamp of the first hit
 	EndTime     int64                      `json:"endTime,omitempty"`   // NEW: Unix timestamp of the last hit
 	Skills      map[uint16]SkillStats      `json:"skills"`
@@ -84,6 +88,20 @@ type SkillUseEvent struct {
 	TargetID  uint64 // 0 if used without target
 	Timestamp int64
 }
+// Replace your singular event struct with a secondary grouped layout
+type SkillGroupEvent struct {
+	Timestamp int64           `json:"timestamp"` // Relative fight second (e.g., 14)
+	TotalDmg  uint64          `json:"totalDmg"`  // Summed damage during this second
+	Skills    []SkillHitMeta  `json:"skills"`    // List of all unique skills inside this second
+}
+
+type SkillHitMeta struct {
+	SkillID   uint16 `json:"skillId"`
+	HitCount  uint32 `json:"hitCount"`
+	Damage    uint64 `json:"damage"`
+	MaxDamage uint64 `json:"maxDamage"`
+	CritCount uint32 `json:"critCount"`
+}
 
 // PlayerStats is now more detailed.
 type PlayerStats struct {
@@ -94,8 +112,12 @@ type PlayerStats struct {
 	TalentColor         string                     `json:"talentColor,omitempty"`
 	MissingAppearPacket bool                       `json:"missingAppearPacket"` // NEW: True if we haven't seen an appear packet (cache warning)
 	OverallStats        DamageBreakdown            `json:"overallStats"`
+	OverallHealing      DamageBreakdown            `json:"overallHealing"`
+	OvershieldProvided  float32                    `json:"overshieldProvided"`
+	HealingByTarget     map[string]DamageBreakdown `json:"healingByTarget"`
+	HealingSkills       map[uint16]SkillStats     `json:"healingSkills"`
 	DamageByTarget      map[string]DamageBreakdown `json:"damageByTarget"` // Key is Target ID
-	SkillUses           []SkillUseEvent            `json:"-"`
+	SkillUses           []SkillGroupEvent            `json:"skillUses"`
 	Deaths              []int64                    `json:"deaths,omitempty"`
 }
 

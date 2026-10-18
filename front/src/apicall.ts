@@ -22,6 +22,22 @@ export async function getSessionSummary(
   return httpCall<FightSummary>(`/api/sessions/${sessionId}/summary`);
 }
 
+// Read-only comparison history; a blank directory uses ordinary saved sessions.
+export async function getPersonalBestHistorySessions(folder: string): Promise<Session[]> {
+  if (!folder.trim()) return getSessions();
+  return httpCall<Session[]>(`/api/sessions/history?folder=${encodeURIComponent(folder.trim())}`);
+}
+
+export async function getPersonalBestHistoricalSummary(sessionId: string, folder: string): Promise<FightSummary> {
+  if (!folder.trim()) return getSessionSummary(sessionId);
+  return httpCall<FightSummary>(`/api/sessions/history/summary?folder=${encodeURIComponent(folder.trim())}&id=${encodeURIComponent(sessionId)}`);
+}
+
+export async function pickPersonalBestHistoryFolder(): Promise<string> {
+  const result = await httpCall<{ folder: string }>("/api/sessions/history/pick-folder", { method: "POST" });
+  return result.folder;
+}
+
 export async function getSessionLog(sessionId: string): Promise<string> {
   const buf = await httpCallRaw(`/api/sessions/${sessionId}/log`);
   return new TextDecoder("utf-8").decode(buf);

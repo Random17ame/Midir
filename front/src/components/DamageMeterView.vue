@@ -366,6 +366,8 @@
         <div class="main-dashboard-content">
           <v-tabs v-model="tab" grow density="compact" class="modern-tabs mb-6">
             <v-tab value="damageDealt">Damage Dealt</v-tab>
+            <!-- Experimental healing UI: optional until effective-healing and shield attribution are validated. -->
+            <v-tab v-if="showHealingTab" value="healing">Healing Done</v-tab>
             <v-tab value="damageTaken">Damage Taken</v-tab>
             <v-tab value="graph">Graph</v-tab>
           </v-tabs>
@@ -373,7 +375,10 @@
           <v-window v-model="tab">
             <v-window-item value="damageDealt">
               <apply-damage-by-skill :attackerNameMap="attackerNameMap" />
-            </v-window-item>
+              </v-window-item>
+            <v-window-item v-if="showHealingTab" value="healing">
+              <apply-healing-by-skill :attackerNameMap="attackerNameMap" />
+              </v-window-item>
             <v-window-item value="damageTaken">
               <damage-taken-by-source />
             </v-window-item>
@@ -392,7 +397,7 @@
 
 <script lang="ts">
 import { defineComponent, ref, computed, inject, nextTick, onMounted, onBeforeUnmount, watch } from "vue";
-import { fightSummary, selectedTargetId, isNavDrawerOpen, activeSessionId } from "@/store";
+import { fightSummary, selectedTargetId, isNavDrawerOpen, activeSessionId, showHealingTab } from "@/store";
 import {
   isGroupTargetId,
   getGroupMemberTargetIds,
@@ -402,6 +407,7 @@ import {
 } from "@/utils/targetGrouping";
 import SessionPanel from "@/components/SessionPanel.vue";
 import ApplyDamageBySkillComponent from "@/components/applyDamageBySkill.vue";
+import ApplyHealingBySkillComponent from "@/components/applyHealingBySkill.vue";
 import DamageTakenBySourceComponent from "@/components/DamageTakenBySource.vue";
 import DamageGraph from "@/components/DamageGraph.vue";
 import TargetConditionView from "@/components/TargetConditionView.vue";
@@ -419,12 +425,17 @@ export default defineComponent({
   components: {
     SessionPanel,
     ApplyDamageBySkill: ApplyDamageBySkillComponent,
+    ApplyHealingBySkill: ApplyHealingBySkillComponent,
     DamageTakenBySource: DamageTakenBySourceComponent,
     DamageGraph,
     TargetConditionView,
   },
   setup() {
     const tab = ref("damageDealt");
+    // If Healing Done is disabled while selected, return to the regular damage view.
+    watch(showHealingTab, (enabled) => {
+      if (!enabled && tab.value === "healing") tab.value = "damageDealt";
+    });
     const condNameMap = inject("condNameMap") as any;
     const showBuffDetails = ref(false);
 
@@ -941,6 +952,7 @@ export default defineComponent({
     return {
       getTargetClass,
       tab,
+      showHealingTab,
       selectedTargetId,
       targetList,
       formattedEncounterDuration,

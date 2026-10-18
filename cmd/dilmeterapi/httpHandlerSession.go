@@ -1,3 +1,5 @@
+// Session HTTP endpoints support saved-session replay and Personal Best history.
+// The optional comparison-folder endpoint is read-only; never alter session files.
 package main
 
 import (
@@ -6,8 +8,12 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
+	"sort"
 	"strconv"
+	"strings"
 
 	"github.com/Marcentus/Midir/packet"
 	"github.com/go-chi/chi/v5"
@@ -16,6 +22,9 @@ import (
 func sessionRouter(sm *SessionManager) http.Handler {
 	r := chi.NewRouter()
 	r.Get("/", handleGetSessions(sm))
+	r.Get("/history", handlePersonalBestHistory(sm))
+	r.Get("/history/summary", handlePersonalBestHistorySummary(sm))
+	r.Post("/history/pick-folder", handlePersonalBestPickFolder())
 	r.Post("/save", handleSaveSession(sm))
 	r.Post("/migrate-all", handleMigrateAllSessions(sm))
 	r.Route("/{sessionID}", func(r chi.Router) {
@@ -176,21 +185,31 @@ func GenerateSummaryFromFile(logPath string) (*FightSummary, error) {
 	}
 	defer file.Close()
 
-	// PASS 1: Get all entity appearances for name/race lookups later.
+	// PASS 1: Get entity appearances and the saved session summary. The summary
+	// is the durable snapshot of aggregate-only data such as overshield totals.
 	entitiesInLog := make(map[string]eventEntityAppear)
+	var savedSessionSummary *SessionSummaryData
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
 		var event eventBase
 		if err := json.Unmarshal(scanner.Bytes(), &event); err != nil {
 			continue
 		}
-		if event.EventId == eventIdEntityAppear {
+		switch event.EventId {
+		case eventIdEntityAppear:
 			var appearEvent eventEntityAppear
 			if err := json.Unmarshal(scanner.Bytes(), &appearEvent); err != nil {
 				continue
 			}
 			entitiesInLog[appearEvent.Id] = appearEvent
 			playerCache.UpdateFromAppear(appearEvent)
+		case eventIdSessionSummary:
+			var wrapper struct {
+				Summary SessionSummaryData `json:"summary"`
+			}
+			if err := json.Unmarshal(scanner.Bytes(), &wrapper); err == nil {
+				savedSessionSummary = &wrapper.Summary
+			}
 		}
 	}
 
@@ -351,8 +370,6 @@ func GenerateSummaryFromFile(logPath string) (*FightSummary, error) {
 				}
 			}
 
-
-
 		case eventIdEntityHPUpdate:
 			var hpUpdate eventEntityHPUpdate
 			if err := json.Unmarshal(line, &hpUpdate); err == nil {
@@ -426,7 +443,114 @@ func GenerateSummaryFromFile(logPath string) (*FightSummary, error) {
 	)
 	summary.GraphData = graphDataByTarget
 
+	// Older session logs do not contain SkillUse events. Rebuild the scatter
+	// chart from the durable damage events when loading a saved session.
+	attachSkillGroupsFromDamageEvents(&summary, allDamageEvents, startTime)
+	applySavedSupportAndSkillData(&summary, savedSessionSummary)
+
 	return &summary, nil
+}
+
+// applySavedSupportAndSkillData restores values that are captured in the save
+// summary but cannot always be reconstructed from raw damage events (notably
+// overshield deltas). Player IDs are preferred; names support older save files.
+func applySavedSupportAndSkillData(summary *FightSummary, saved *SessionSummaryData) {
+	if summary == nil || saved == nil {
+		return
+	}
+	for _, stored := range saved.Players {
+		currentID := stored.ID
+		if currentID == "" {
+			for id, current := range summary.Players {
+				if current.Name == stored.Name {
+					currentID = id
+					break
+				}
+			}
+		}
+		if currentID == "" {
+			continue
+		}
+		current, exists := summary.Players[currentID]
+		if !exists {
+			current = PlayerStats{
+				ID: currentID, Name: stored.Name,
+				OverallStats:    newDamageBreakdown(),
+				OverallHealing:  newDamageBreakdown(),
+				HealingByTarget: make(map[string]DamageBreakdown),
+				DamageByTarget:  make(map[string]DamageBreakdown),
+			}
+		}
+		if stored.OverallHealing.TotalDamage > 0 || stored.OvershieldProvided > 0 || len(stored.HealingByTarget) > 0 {
+			current.OverallHealing = stored.OverallHealing
+			current.HealingByTarget = stored.HealingByTarget
+			current.OvershieldProvided = stored.OvershieldProvided
+		}
+		if len(stored.SkillUses) > 0 {
+			current.SkillUses = stored.SkillUses
+		}
+		summary.Players[currentID] = current
+	}
+}
+
+// attachSkillGroupsFromDamageEvents reconstructs the per-player timeline used by
+// DamageScatterChart. It ignores healing (negative damage values) and groups
+// hits by second to match the existing live chart data format.
+func attachSkillGroupsFromDamageEvents(summary *FightSummary, events []eventDamage, encounterStart int64) {
+	if summary == nil {
+		return
+	}
+	type skillGroupKey struct {
+		timestamp int64
+		skillID   uint16
+	}
+	groupsByPlayer := make(map[string]map[int64]*SkillGroupEvent)
+	skillsByGroup := make(map[string]map[skillGroupKey]int)
+	for _, event := range events {
+		if event.Damage <= 0 || event.Id == "" {
+			continue
+		}
+		timestamp := event.At - encounterStart
+		if timestamp < 0 {
+			timestamp = 0
+		}
+		if groupsByPlayer[event.Id] == nil {
+			groupsByPlayer[event.Id] = make(map[int64]*SkillGroupEvent)
+			skillsByGroup[event.Id] = make(map[skillGroupKey]int)
+		}
+		group := groupsByPlayer[event.Id][timestamp]
+		if group == nil {
+			group = &SkillGroupEvent{Timestamp: timestamp, Skills: []SkillHitMeta{}}
+			groupsByPlayer[event.Id][timestamp] = group
+		}
+		damage := uint64(event.Damage)
+		group.TotalDmg += damage
+		key := skillGroupKey{timestamp: timestamp, skillID: event.SkillId}
+		index, exists := skillsByGroup[event.Id][key]
+		if !exists {
+			group.Skills = append(group.Skills, SkillHitMeta{SkillID: event.SkillId})
+			index = len(group.Skills) - 1
+			skillsByGroup[event.Id][key] = index
+		}
+		meta := &group.Skills[index]
+		meta.HitCount++
+		meta.Damage += damage
+		if damage > meta.MaxDamage {
+			meta.MaxDamage = damage
+		}
+		if event.IsCritical {
+			meta.CritCount++
+		}
+	}
+	for playerID, player := range summary.Players {
+		groups := groupsByPlayer[playerID]
+		player.SkillUses = make([]SkillGroupEvent, 0, len(groups))
+		for _, group := range groups {
+			player.SkillUses = append(player.SkillUses, *group)
+		}
+		sort.Slice(player.SkillUses, func(i, j int) bool { return player.SkillUses[i].Timestamp < player.SkillUses[j].Timestamp })
+		summary.Players[playerID] = player
+	}
 }
 
 // processEventsForSummary takes the raw list of damage events and entity data from a log file
@@ -489,6 +613,59 @@ func processEventsForSummary(allDamageEvents []eventDamage, entitiesInLog map[st
 
 		// Update the shared combat timer for the specific target that was hit.
 		targetIDStr := damageEvent.TargetId
+		// --- Firewall Separation Engine for History Summary File Rebuilds ---
+		if damageEvent.Damage < 0 {
+			attackerIdStr := damageEvent.Id
+			skillId := damageEvent.SkillId
+			healAmount := -damageEvent.Damage
+
+			pStats, exists := playerStats[attackerIdStr]
+			if !exists {
+				var pName string
+				if entity, ok := entitiesInLog[attackerIdStr]; ok {
+					pName = entity.Name
+				} else {
+					pName = "Unknown Caster"
+				}
+				pStats = &PlayerStats{
+					ID:              attackerIdStr,
+					Name:            pName,
+					OverallStats:    newDamageBreakdown(),
+					OverallHealing:  newDamageBreakdown(),
+					HealingByTarget: make(map[string]DamageBreakdown),
+					DamageByTarget:  make(map[string]DamageBreakdown),
+				}
+				playerStats[attackerIdStr] = pStats
+			}
+
+			// Local utility object wrapper to initialize structure manipulation routines safely
+			// Older/mixed event streams can have a player record without support maps.
+			if pStats.OverallHealing.Skills == nil {
+				pStats.OverallHealing = newDamageBreakdown()
+			}
+			if pStats.HealingByTarget == nil {
+				pStats.HealingByTarget = make(map[string]DamageBreakdown)
+			}
+
+			a := NewAggregator()
+
+			tempHealPacket := &packet.CombatActionPacket{
+				Hit: &packet.CombatActionPacketHitInfo{
+					Damage: healAmount,
+				},
+			}
+
+			a.updateHealingBreakdown(&pStats.OverallHealing, tempHealPacket, skillId)
+
+			targetBreakdown, exists := pStats.HealingByTarget[targetIDStr]
+			if !exists {
+				targetBreakdown = newDamageBreakdown()
+			}
+			a.updateHealingBreakdown(&targetBreakdown, tempHealPacket, skillId)
+			pStats.HealingByTarget[targetIDStr] = targetBreakdown
+			continue // Safeguard: prevents healing calculations from contaminating offensive totals!
+		}
+
 		timestamps := targetTimestamps[targetIDStr]
 		if timestamps.StartTime == 0 {
 			timestamps.StartTime = damageEvent.At
@@ -534,6 +711,18 @@ func processEventsForSummary(allDamageEvents []eventDamage, entitiesInLog map[st
 			}
 
 			// Update the player's overall damage stats.
+			// Damage events can create a player record before any healing event.
+			// Ensure support maps exist before a later healing event writes to them.
+			if stats.OverallHealing.Skills == nil {
+				stats.OverallHealing = newDamageBreakdown()
+			}
+			if stats.HealingByTarget == nil {
+				stats.HealingByTarget = make(map[string]DamageBreakdown)
+			}
+			if stats.DamageByTarget == nil {
+				stats.DamageByTarget = make(map[string]DamageBreakdown)
+			}
+
 			updateBreakdownFromLog(&stats.OverallStats, &damageEvent)
 
 			// Update the player's damage stats against this specific target.
@@ -565,7 +754,7 @@ func generateGraphDataFromEvents(allDamageEvents []eventDamage, startTime, endTi
 	}
 
 	const graphInterval int64 = 2 // seconds - our sampling rate
-	const dpsWindow int64 = 15   // seconds - for the rolling DPS calculation
+	const dpsWindow int64 = 15    // seconds - for the rolling DPS calculation
 
 	graphData := make(map[string][]GraphDataPoint)
 
@@ -922,6 +1111,10 @@ func finalizeSummaryFromLog(
 		if color, ok := playerTalentColorsInLog[pStats.ID]; ok {
 			finalizedPstats.TalentColor = color
 		}
+		finalizedPstats.OverallHealing = pStats.OverallHealing
+		finalizedPstats.OvershieldProvided = pStats.OvershieldProvided
+		finalizedPstats.HealingByTarget = pStats.HealingByTarget
+
 		summary.Players[pStats.ID] = finalizedPstats
 		totalDamage += finalizedPstats.OverallStats.TotalDamage
 	}
@@ -992,5 +1185,83 @@ func handleDeleteSession(sm *SessionManager) http.HandlerFunc {
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+// These endpoints are intentionally read-only. Selecting a comparison history
+// folder does not alter the directory where Midir writes new saved sessions.
+func personalBestHistoryDirectory(sm *SessionManager, r *http.Request) (string, error) {
+	folder := strings.TrimSpace(r.URL.Query().Get("folder"))
+	if folder == "" {
+		return sm.logDirectory, nil
+	}
+	abs, err := filepath.Abs(folder)
+	if err != nil {
+		return "", err
+	}
+	info, err := os.Stat(abs)
+	if err != nil {
+		return "", err
+	}
+	if !info.IsDir() {
+		return "", fmt.Errorf("not a directory")
+	}
+	return abs, nil
+}
+
+func handlePersonalBestHistory(sm *SessionManager) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		folder, err := personalBestHistoryDirectory(sm, r)
+		if err != nil {
+			respondWithError(w, http.StatusBadRequest, "Invalid history directory: "+err.Error())
+			return
+		}
+		readOnlyManager := &SessionManager{logDirectory: folder}
+		list, err := readOnlyManager.GetAllSessions()
+		if err != nil {
+			respondWithError(w, http.StatusInternalServerError, "Unable to read comparison sessions: "+err.Error())
+			return
+		}
+		respondWithJSON(w, http.StatusOK, list)
+	}
+}
+
+func handlePersonalBestHistorySummary(sm *SessionManager) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		folder, err := personalBestHistoryDirectory(sm, r)
+		if err != nil {
+			respondWithError(w, http.StatusBadRequest, "Invalid history directory: "+err.Error())
+			return
+		}
+		name := r.URL.Query().Get("id")
+		// Only basenames of saved session files may be opened, never nested paths.
+		if name == "" || filepath.Base(name) != name || strings.ContainsAny(name, `/\`) || !strings.HasSuffix(strings.ToLower(name), ".ndjson") || name == liveSessionFilename {
+			respondWithError(w, http.StatusBadRequest, "Invalid saved-session filename")
+			return
+		}
+		summary, err := GenerateSummaryFromFile(filepath.Join(folder, name))
+		if err != nil {
+			respondWithError(w, http.StatusNotFound, "Unable to read historical session: "+err.Error())
+			return
+		}
+		respondWithJSON(w, http.StatusOK, summary)
+	}
+}
+
+func handlePersonalBestPickFolder() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if runtime.GOOS != "windows" {
+			respondWithError(w, http.StatusNotImplemented, "Native folder selection is available on Windows only; enter a directory path instead.")
+			return
+		}
+		script := `Add-Type -AssemblyName System.Windows.Forms; $dialog = New-Object System.Windows.Forms.FolderBrowserDialog; $dialog.Description = 'Select Midir Personal Best history folder'; if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { Write-Output $dialog.SelectedPath }`
+		cmd := exec.Command("powershell.exe", "-NoProfile", "-STA", "-Command", script)
+		output, err := cmd.Output()
+		folder := strings.TrimSpace(string(output))
+		if err != nil || folder == "" {
+			respondWithError(w, http.StatusBadRequest, "No history folder selected")
+			return
+		}
+		respondWithJSON(w, http.StatusOK, map[string]string{"folder": folder})
 	}
 }

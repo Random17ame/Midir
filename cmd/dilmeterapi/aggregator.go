@@ -55,6 +55,32 @@ type Aggregator struct {
 	targetPresenceIntervals map[uint64][]PresenceInterval
 	// Target HP Tracking (Live session cache)
 	lastKnownHP map[uint64]TargetHPPoint
+	// Most recent healing-action caster for each target. Used only as a short-lived
+	// attribution hint for a following AdditionalHP (stat 31) increase.
+	lastHealingCaster   map[uint64]healingCasterHint
+	lastHealingCasterID uint64
+}
+
+type healingCasterHint struct {
+	CasterID uint64
+	SkillID  uint16
+	At       int64
+}
+
+const healingAttributionWindowSeconds int64 = 2
+
+// These are the only skills known to provide overshield. Keeping this allowlist
+// separate from ordinary healing prevents unrelated heals from being credited
+// when a later AdditionalHP update arrives.
+func isOvershieldSkill(skillID uint16) bool {
+	switch skillID {
+	case 59001, // Hands of Restoration
+		59002, // Echoes of Salvation
+		59003: // Resonant Litany
+		return true
+	default:
+		return false
+	}
 }
 
 // NewAggregator creates and initializes a new Aggregator.
@@ -82,6 +108,7 @@ func NewAggregator() *Aggregator {
 		disappeared:             make(map[uint64]bool),
 		targetPresenceIntervals: make(map[uint64][]PresenceInterval),
 		lastKnownHP:             make(map[uint64]TargetHPPoint),
+		lastHealingCaster:       make(map[uint64]healingCasterHint),
 	}
 }
 
@@ -351,8 +378,12 @@ func (a *Aggregator) ProcessPacket(p *packet.GamePacket) {
 		return
 	}
 
+	if p.Op == opcodeHealing {
+		a.processDedicatedHealingPacket(p)
+	}
 	if p.Op == opcodeCombatAction {
 		a.processCombatAction(p)
+		a.processOvershieldCasterHint(p)
 	}
 	if p.Op == opcodeEffect {
 		a.processEffect(p)
@@ -512,7 +543,6 @@ func (a *Aggregator) processPublicStatUpdate(p *packet.GamePacket) {
 	if err != nil {
 		return
 	}
-
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
@@ -534,10 +564,35 @@ func (a *Aggregator) processPublicStatUpdate(p *packet.GamePacket) {
 		baseChanged = true
 	}
 	if val, ok := statUpdate.Stats[31]; ok {
+		// Stat 31 is the current additional-health pool, not a healing event.
+		// Attribute only positive deltas that follow one of the three skills
+		// known to provide overshield. Self-casts work naturally because the
+		// caster and recipient IDs are the same; never guess a caster otherwise.
+		if val > entity.AdditionalHP {
+			shieldDelta := val - entity.AdditionalHP
+			targetID := statUpdate.EntityId
+			targetIdStr := strconv.FormatUint(targetID, 10)
+			hint := a.lastHealingCaster[targetID]
+			casterID := uint64(0)
+			age := p.At.Unix() - hint.At
+			if hint.CasterID != 0 && isOvershieldSkill(hint.SkillID) && age >= 0 && age <= healingAttributionWindowSeconds {
+				casterID = hint.CasterID
+			}
+			if casterID != 0 {
+				if sourceCaster := a.getOrCreatePlayerStatsFromCache(casterID); sourceCaster != nil {
+					sourceCaster.OvershieldProvided += shieldDelta
+					targetBreakdown, exists := sourceCaster.HealingByTarget[targetIdStr]
+					if !exists {
+						targetBreakdown = newDamageBreakdown()
+					}
+					targetBreakdown.OvershieldProvided += shieldDelta
+					sourceCaster.HealingByTarget[targetIdStr] = targetBreakdown
+				}
+			}
+		}
 		entity.AdditionalHP = val
 		bonusChanged = true
 	}
-
 	if baseChanged || bonusChanged {
 		entity.MaxHP = entity.BaseHP + entity.AdditionalHP
 	}
@@ -671,13 +726,15 @@ func (a *Aggregator) processCombatAction(p *packet.GamePacket) {
 			sub.Hit.ManaDamage = 0
 		}
 
+		// Optimization Rule: Revert safety gate to let standard combat subpackets pass cleanly
 		if sub.Hit == nil || (sub.Hit.Damage <= 0 && sub.Hit.ManaDamage <= 0) {
 			continue
 		}
-		// Update the shared timers for this target, regardless of who hit it
+
+		// Update shared timers for the combat instance
 		a.updateTimestamps(sub.EntityId, p.At)
 
-		// If the attacker is a player, update their damage dealt stats
+		// ROUTE B: Standard offensive damage dealt to a boss/enemy
 		if sub.Hit.Damage > 0 {
 			if playerInfo, isPlayer := playerCache.Get(attackerId); isPlayer {
 				stats := a.getOrCreatePlayerStats(playerInfo)
@@ -687,21 +744,200 @@ func (a *Aggregator) processCombatAction(p *packet.GamePacket) {
 			}
 		}
 
-		// If the target is a player, update their damage taken stats
+		// Keep tracking standard incoming damage statistics if the receiver is a player
 		if targetInfo, isPlayerTarget := playerCache.Get(sub.EntityId); isPlayerTarget {
-			a.updateDamageTaken(targetInfo, attackerId, attackSkillId, sub.Hit.Damage, float32(sub.Hit.ManaDamage))
+			if sub.Hit.Damage > 0 {
+				a.updateDamageTaken(targetInfo, attackerId, attackSkillId, sub.Hit.Damage, float32(sub.Hit.ManaDamage))
+			}
+		}
+
+		// --- START: SECOND-INCREMENT CHRONOLOGICAL SCATTER DATA CAPTURE ---
+		if sub.Hit != nil && sub.Hit.Damage > 0 {
+			relativeSecond := p.At.Unix() - a.encounterStartTime
+			if relativeSecond < 0 {
+				relativeSecond = 0
+			}
+
+			// Pull the player stats context into the scope of this subpacket capture loop
+			if playerInfo, isPlayer := playerCache.Get(attackerId); isPlayer {
+				pStats := a.getOrCreatePlayerStats(playerInfo)
+
+				// 1. Locate or append the bucket for the current flight second
+				var targetGroup *SkillGroupEvent
+				for i := range pStats.SkillUses {
+					if pStats.SkillUses[i].Timestamp == relativeSecond {
+						targetGroup = &pStats.SkillUses[i]
+						break
+					}
+				}
+
+				if targetGroup == nil {
+					pStats.SkillUses = append(pStats.SkillUses, SkillGroupEvent{
+						Timestamp: relativeSecond,
+						TotalDmg:  0,
+						Skills:    []SkillHitMeta{},
+					})
+					targetGroup = &pStats.SkillUses[len(pStats.SkillUses)-1]
+				}
+
+				// 2. Safely cast and accumulate the overall damage total for this interval
+				packetDmgVal := uint64(sub.Hit.Damage)
+				targetGroup.TotalDmg += packetDmgVal
+
+				// 3. Track or insert subpacket skill specifications inside this second
+				foundSubSkill := false
+				packetIsCrit := (sub.Hit.Options & packet.CombatActionHitOptionsCritical) != 0
+
+				for i := range targetGroup.Skills {
+					if targetGroup.Skills[i].SkillID == attackSkillId {
+						targetGroup.Skills[i].HitCount++
+						targetGroup.Skills[i].Damage += packetDmgVal
+						if packetDmgVal > targetGroup.Skills[i].MaxDamage {
+							targetGroup.Skills[i].MaxDamage = packetDmgVal
+						}
+						if packetIsCrit {
+							targetGroup.Skills[i].CritCount++
+						}
+						foundSubSkill = true
+						break
+					}
+				}
+
+				// 4. If this skill has not been recorded during this second yet, append it cleanly
+				if !foundSubSkill {
+					critCountVal := uint32(0)
+					if packetIsCrit {
+						critCountVal = 1
+					}
+					targetGroup.Skills = append(targetGroup.Skills, SkillHitMeta{
+						SkillID:   attackSkillId,
+						HitCount:  1,
+						Damage:    packetDmgVal,
+						MaxDamage: packetDmgVal,
+						CritCount: critCountVal,
+					})
+				}
+			}
+		}
+		// --- END: SECOND-INCREMENT CHRONOLOGICAL SCATTER DATA CAPTURE ---
+	}
+}
+
+// processOvershieldCasterHint retains skill-aware attribution for the separate
+// Overshield: AdditionalHP increases are attributed using short-lived caster hints;
+// this is heuristic and must not be mistaken for effective HP healing.
+// AdditionalHP stat update. Ordinary healing amounts are no longer inferred from
+// CombatActionPack; only the known shield skills can seed this short-lived hint.
+func (a *Aggregator) processOvershieldCasterHint(p *packet.GamePacket) {
+	pack, err := packet.ParseCombatActionPackPacket(p)
+	if err != nil {
+		return
+	}
+	var casterID uint64
+	var skillID uint16
+	for _, sub := range pack.SubPackets {
+		if sub.Type&packet.CombatActionTypeAttacker != 0 {
+			casterID, skillID = sub.EntityId, sub.SkillId
+			break
 		}
 	}
+	if casterID == 0 || !isOvershieldSkill(skillID) {
+		return
+	}
+	casterID, skillID = a.resolveAttackerAndSkill(casterID, skillID)
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	for _, sub := range pack.SubPackets {
+		if sub.Hit != nil && sub.EntityId != 0 {
+			a.lastHealingCaster[sub.EntityId] = healingCasterHint{CasterID: casterID, SkillID: skillID, At: p.At.Unix()}
+		}
+		if sub.Attacker != nil && sub.Attacker.TargetId != 0 {
+			a.lastHealingCaster[sub.Attacker.TargetId] = healingCasterHint{CasterID: casterID, SkillID: skillID, At: p.At.Unix()}
+		}
+	}
+}
+
+// processDedicatedHealingPacket handles Mabinogi's dedicated healing opcode.
+// This is deliberately separate from offensive combat-action filtering: PvE
+// recipients do not need to be hostile combat targets to receive healing.
+func (a *Aggregator) processDedicatedHealingPacket(p *packet.GamePacket) {
+	heal, err := packet.ParseHealingPacket(p)
+	if err != nil {
+		return
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	switch heal.Type {
+	case 0x19, 0x28:
+		if heal.EntityID != 0 {
+			a.lastHealingCasterID = heal.EntityID
+		}
+		return
+	case 0x0A:
+		if heal.Amount == 0 {
+			return
+		}
+		// Preserve healing even when the caster packet was missing or the caster
+		// cannot be resolved to a character. The UI folds numeric/unknown sources
+		// into one friendly "Misc. Anonymous Healing" row.
+		var stats *PlayerStats
+		if a.lastHealingCasterID != 0 {
+			if playerInfo, ok := playerCache.Get(a.lastHealingCasterID); ok && playerInfo != nil && playerInfo.Name != "" {
+				stats = a.getOrCreatePlayerStats(playerInfo)
+			}
+		}
+		if stats == nil {
+			const anonymousHealingID uint64 = ^uint64(0)
+			stats = a.playerStats[anonymousHealingID]
+			if stats == nil {
+				stats = &PlayerStats{
+					ID: "misc-anonymous-healing", Name: "Misc. Anonymous Healing",
+					OverallStats: newDamageBreakdown(), OverallHealing: newDamageBreakdown(),
+					HealingByTarget: make(map[string]DamageBreakdown), DamageByTarget: make(map[string]DamageBreakdown),
+				}
+				a.playerStats[anonymousHealingID] = stats
+			}
+		}
+		targetID := heal.EntityID
+		targetKey := strconv.FormatUint(targetID, 10)
+		amount := float32(heal.Amount)
+		// Skill ID is unavailable in this opcode's single-heal result packet;
+		// retain the amount under skill 0 rather than silently dropping healing.
+		temp := &packet.CombatActionPacket{Hit: &packet.CombatActionPacketHitInfo{Damage: amount}}
+		a.updateHealingBreakdown(&stats.OverallHealing, temp, 0)
+		targetBreakdown := stats.HealingByTarget[targetKey]
+		if targetBreakdown.Skills == nil {
+			targetBreakdown = newDamageBreakdown()
+		}
+		a.updateHealingBreakdown(&targetBreakdown, temp, 0)
+		stats.HealingByTarget[targetKey] = targetBreakdown
+	}
+}
+
+// getOrCreatePlayerStatsFromCache resolves a known player without inventing an
+// identity. Callers must already hold a.mu, as with getOrCreatePlayerStats.
+func (a *Aggregator) getOrCreatePlayerStatsFromCache(playerID uint64) *PlayerStats {
+	if stats := a.playerStats[playerID]; stats != nil {
+		return stats
+	}
+	info, ok := playerCache.Get(playerID)
+	if !ok {
+		return nil
+	}
+	return a.getOrCreatePlayerStats(info)
 }
 
 func (a *Aggregator) getOrCreatePlayerStats(playerInfo *PlayerInfo) *PlayerStats {
 	stats, exists := a.playerStats[playerInfo.ID]
 	if !exists {
 		stats = &PlayerStats{
-			ID:             strconv.FormatUint(playerInfo.ID, 10),
-			Name:           playerInfo.Name,
-			OverallStats:   newDamageBreakdown(),
-			DamageByTarget: make(map[string]DamageBreakdown),
+			ID:              strconv.FormatUint(playerInfo.ID, 10),
+			Name:            playerInfo.Name,
+			OverallStats:    newDamageBreakdown(),
+			OverallHealing:  newDamageBreakdown(),
+			HealingByTarget: make(map[string]DamageBreakdown),
+			DamageByTarget:  make(map[string]DamageBreakdown),
 		}
 		a.playerStats[playerInfo.ID] = stats
 	}
@@ -750,6 +986,46 @@ func (a *Aggregator) updateBreakdown(breakdown *DamageBreakdown, hitPacket *pack
 	if damage > skillStats.MaxDamage {
 		skillStats.MaxDamage = damage
 	}
+	breakdown.Skills[skillId] = skillStats
+}
+
+func (a *Aggregator) updateHealingBreakdown(breakdown *DamageBreakdown, hitPacket *packet.CombatActionPacket, skillId uint16) {
+	healAmount := hitPacket.Hit.Damage // This is already flipped to a positive number
+
+	// Accumulate strictly into healing tracking pools
+	breakdown.TotalDamage += healAmount
+	breakdown.HitCount++
+
+	if (hitPacket.Hit.Options & packet.CombatActionHitOptionsCritical) != 0 {
+		breakdown.CritCount++
+	}
+
+	if breakdown.Skills == nil {
+		breakdown.Skills = make(map[uint16]SkillStats)
+	}
+
+	skillStats := breakdown.Skills[skillId]
+	skillStats.ID = skillId
+	skillStats.TotalDamage += healAmount
+	skillStats.Count++
+
+	if (hitPacket.Hit.Options & packet.CombatActionHitOptionsCritical) != 0 {
+		skillStats.CritCount++
+		skillStats.TotalDamageCrit += healAmount
+		if healAmount > skillStats.MaxDamageCrit {
+			skillStats.MaxDamageCrit = healAmount
+		}
+	} else {
+		skillStats.TotalDamageNonCrit += healAmount
+		if healAmount > skillStats.MaxDamageNonCrit {
+			skillStats.MaxDamageNonCrit = healAmount
+		}
+	}
+
+	if healAmount > skillStats.MaxDamage {
+		skillStats.MaxDamage = healAmount
+	}
+
 	breakdown.Skills[skillId] = skillStats
 }
 
@@ -826,7 +1102,10 @@ func (a *Aggregator) GetSummary() FightSummary {
 			TalentName:          a.playerTalentNames[playerID],
 			TalentColor:         a.playerTalentColors[playerID],
 			DamageByTarget:      make(map[string]DamageBreakdown),
-			MissingAppearPacket: !a.playerSeenAppear[playerID], // Set the flag
+			MissingAppearPacket: !a.playerSeenAppear[playerID],
+			SkillUses:           pStats.SkillUses,
+			HealingSkills:       pStats.HealingSkills,      // Sync healing skill logs to frontend
+			OvershieldProvided:  pStats.OvershieldProvided, // Connect overshield metrics to broadcast
 		}
 
 		// Finalize overall stats using the single overall encounter duration
@@ -834,7 +1113,13 @@ func (a *Aggregator) GetSummary() FightSummary {
 		playerCopy.OverallStats.StartTime = a.encounterStartTime
 		playerCopy.OverallStats.EndTime = a.encounterEndTime
 
-		// Finalize per-target stats using the shared duration for each specific target
+		// Finalize overall healing tracking systems using core combat clocks
+		playerCopy.OverallHealing = a.finalizeBreakdown(pStats.OverallHealing, summary.EncounterDuration, a.encounterStartTime, a.encounterEndTime, playerID, true, 0)
+		playerCopy.OverallHealing.StartTime = a.encounterStartTime
+		playerCopy.OverallHealing.EndTime = a.encounterEndTime
+		playerCopy.OverallHealing.OvershieldProvided = pStats.OvershieldProvided
+
+		// Finalize per-target damage stats using the shared duration for each specific target
 		for targetIdStr, breakdown := range pStats.DamageByTarget {
 			targetIdUint, _ := strconv.ParseUint(targetIdStr, 10, 64)
 			targetTimes := a.targetTimestamps[targetIdUint]
@@ -845,6 +1130,19 @@ func (a *Aggregator) GetSummary() FightSummary {
 			finalizedBreakdown.EndTime = targetTimes.EndTime
 			playerCopy.DamageByTarget[targetIdStr] = finalizedBreakdown
 			uniqueTargets[targetIdUint] = true
+		}
+
+		// Finalize per-target healing stats using the shared duration for each specific target
+		playerCopy.HealingByTarget = make(map[string]DamageBreakdown)
+		for targetIdStr, breakdown := range pStats.HealingByTarget {
+			targetIdUint, _ := strconv.ParseUint(targetIdStr, 10, 64)
+			targetTimes := a.targetTimestamps[targetIdUint]
+			targetDuration := float64(targetTimes.EndTime - targetTimes.StartTime)
+
+			finalizedBreakdown := a.finalizeBreakdown(breakdown, targetDuration, targetTimes.StartTime, targetTimes.EndTime, playerID, false, targetIdUint)
+			finalizedBreakdown.StartTime = targetTimes.StartTime
+			finalizedBreakdown.EndTime = targetTimes.EndTime
+			playerCopy.HealingByTarget[targetIdStr] = finalizedBreakdown
 		}
 
 		summary.Players[pStats.ID] = playerCopy
@@ -1233,6 +1531,8 @@ func (a *Aggregator) Clear() {
 	a.disappeared = make(map[uint64]bool)
 	a.targetPresenceIntervals = make(map[uint64][]PresenceInterval)
 	a.lastKnownHP = make(map[uint64]TargetHPPoint)
+	a.lastHealingCaster = make(map[uint64]healingCasterHint)
+	a.lastHealingCasterID = 0
 
 	// Clear condition HISTORY, but keep ACTIVE conditions.
 	// This ensures that when the new session starts, we know they still have the buff,

@@ -22,11 +22,17 @@ const liveSessionFilename = "live-session.ndjson"
 const livePcapFilename = "live-session.pcapng"
 
 type SessionSummaryPlayer struct {
-	Name        string  `json:"name"`
-	DPS         float32 `json:"dps"`
-	ArcanaName  string  `json:"arcanaName"`
-	ArcanaIcon  string  `json:"arcanaIcon,omitempty"`
-	TotalDamage float32 `json:"totalDamage"`
+	ID                 string                     `json:"id,omitempty"`
+	Name               string                     `json:"name"`
+	DPS                float32                    `json:"dps"`
+	ArcanaName         string                     `json:"arcanaName"`
+	ArcanaIcon         string                     `json:"arcanaIcon,omitempty"`
+	TotalDamage        float32                    `json:"totalDamage"`
+	OverallHealing     DamageBreakdown            `json:"overallHealing"`
+	HealingByTarget    map[string]DamageBreakdown `json:"healingByTarget"`
+	SkillUses          []SkillGroupEvent          `json:"skillUses"`
+	OvershieldProvided float32                    `json:"overshieldProvided"`
+	TotalHealing       float32                    `json:"totalHealing"`
 }
 
 type SessionSummaryEnemy struct {
@@ -36,12 +42,13 @@ type SessionSummaryEnemy struct {
 }
 
 type SessionSummaryData struct {
-	Name        string                 `json:"name"`
-	StartTime   int64                  `json:"startTime"`
-	Duration    float64                `json:"duration"`
-	TotalDamage float32                `json:"totalDamage"`
-	Players     []SessionSummaryPlayer `json:"players"`
-	Enemies     []SessionSummaryEnemy  `json:"enemies"`
+	Name         string                 `json:"name"`
+	StartTime    int64                  `json:"startTime"`
+	Duration     float64                `json:"duration"`
+	TotalDamage  float32                `json:"totalDamage"`
+	TotalHealing float32                `json:"totalHealing"`
+	Players      []SessionSummaryPlayer `json:"players"`
+	Enemies      []SessionSummaryEnemy  `json:"enemies"`
 }
 
 type Session struct {
@@ -187,21 +194,40 @@ func (sm *SessionManager) SaveLiveSession(name string) error {
 		summaryData.Duration = summary.EncounterDuration
 		summaryData.TotalDamage = summary.TotalDamage
 
+		// Initialize your aggregate parameter variables at the very beginning of the function scope
 		targetDamageMap := make(map[string]float32)
+		var totalPartyHealing float32 = 0
 
-		for _, pstat := range summary.Players {
-			summaryData.Players = append(summaryData.Players, SessionSummaryPlayer{
-				Name:        pstat.Name,
-				DPS:         pstat.OverallStats.DPS,
-				ArcanaName:  pstat.TalentName,
-				ArcanaIcon:  "", // Omit from disk serialization (omitempty)
-				TotalDamage: pstat.OverallStats.TotalDamage,
-			})
-			for tID, tBreakdown := range pstat.DamageByTarget {
-				targetDamageMap[tID] += tBreakdown.TotalDamage
+		if summary != nil {
+			summaryData.Duration = summary.EncounterDuration
+			summaryData.TotalDamage = summary.TotalDamage
+
+			for _, pstat := range summary.Players {
+				summaryData.Players = append(summaryData.Players, SessionSummaryPlayer{
+					ID:                 pstat.ID,
+					Name:               pstat.Name,
+					DPS:                pstat.OverallStats.DPS,
+					ArcanaName:         pstat.TalentName,
+					ArcanaIcon:         "",
+					TotalDamage:        pstat.OverallStats.TotalDamage,
+					OverallHealing:     pstat.OverallHealing,
+					HealingByTarget:    pstat.HealingByTarget,
+					SkillUses:          pstat.SkillUses,
+					OvershieldProvided: pstat.OvershieldProvided,
+					TotalHealing:       pstat.OverallHealing.TotalDamage,
+				})
+
+				// Accumulate raw player healing into the unified party pool sum safely
+				totalPartyHealing += pstat.OverallHealing.TotalDamage
+
+				for tID, tBreakdown := range pstat.DamageByTarget {
+					targetDamageMap[tID] += tBreakdown.TotalDamage
+				}
 			}
-		}
 
+			// Map the finalized accumulation down to your summary structures
+			summaryData.TotalHealing = totalPartyHealing
+		}
 		sort.Slice(summaryData.Players, func(i, j int) bool {
 			return summaryData.Players[i].TotalDamage > summaryData.Players[j].TotalDamage
 		})
@@ -687,26 +713,30 @@ func (sm *SessionManager) MigrateSession(sessionID string) error {
 
 	summaryData.Duration = summary.EncounterDuration
 	summaryData.TotalDamage = summary.TotalDamage
-	
+
 	targetDamageMap := make(map[string]float32)
 
 	for _, pstat := range summary.Players {
 		summaryData.Players = append(summaryData.Players, SessionSummaryPlayer{
-			Name:        pstat.Name,
-			DPS:         pstat.OverallStats.DPS,
-			ArcanaName:  pstat.TalentName,
-			ArcanaIcon:  "", // Omit from disk serialization (omitempty)
-			TotalDamage: pstat.OverallStats.TotalDamage,
+			ID:              pstat.ID,
+			Name:            pstat.Name,
+			DPS:             pstat.OverallStats.DPS,
+			ArcanaName:      pstat.TalentName,
+			ArcanaIcon:      "", // Omit from disk serialization (omitempty)
+			TotalDamage:     pstat.OverallStats.TotalDamage,
+			OverallHealing:  pstat.OverallHealing,
+			HealingByTarget: pstat.HealingByTarget,
+			SkillUses:       pstat.SkillUses, // <-- Add this here to fix migrations!
 		})
 		for tID, tBreakdown := range pstat.DamageByTarget {
 			targetDamageMap[tID] += tBreakdown.TotalDamage
 		}
 	}
-	
+
 	sort.Slice(summaryData.Players, func(i, j int) bool {
 		return summaryData.Players[i].TotalDamage > summaryData.Players[j].TotalDamage
 	})
-	
+
 	for tID, dmg := range targetDamageMap {
 		name := "Unknown"
 		var raceId uint32

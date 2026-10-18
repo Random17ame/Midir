@@ -34,15 +34,38 @@
         </div>
         <v-checkbox
           v-model="showDeaths"
-          label="Highlight Player Deaths"
+          label="Death Flags (snapshot DPS)"
           density="compact"
           hide-details
           color="error"
         />
+        <v-checkbox
+          v-model="showGhostRunner"
+          label="Ghost Runner (typical productive DPS)"
+          density="compact"
+          hide-details
+          color="deep-purple-accent-2"
+        />
       </div>
-      <div style="height: 500px" class="chart-wrapper">
+
+      <!-- Primary Graph Box (Strict 500px) -->
+      <div style="height: 500px" class="chart-wrapper mb-6">
         <LineChart :data="chartData" :options="chartOptions" />
       </div>
+      
+      <!-- Scatter plot is independent of the main graph's visible-player count. -->
+      <v-row class="mx-0 my-6 clear-both w-100">
+        <v-col cols="12" class="pa-0">
+          <v-card
+            class="pa-4 border-card elevation-4"
+            style="background: #1e293b; border: 1px solid rgba(255,255,255,0.08); width: 100%; min-height: 380px;"
+          >
+            <DamageScatterChart :players="scatterPlayers" />
+          </v-card>
+        </v-col>
+      </v-row>
+
+      <!-- Condition Timeline Box -->
       <div v-if="selectedTargetConditions" class="mt-4">
           <ConditionTimeline 
             :conditions="selectedTargetConditions" 
@@ -59,8 +82,10 @@
   </v-sheet>
 </template>
 
+
 <script lang="ts">
 import { defineComponent, computed, inject, ref, watch } from "vue";
+import DamageScatterChart from "./DamageScatterChart.vue";
 import { Line as LineChart } from "vue-chartjs";
 import ConditionTimeline from "./ConditionTimeline.vue";
 import {
@@ -138,7 +163,7 @@ ChartJS.register(
 
 export default defineComponent({
   name: "DamageGraph",
-  components: { LineChart, ConditionTimeline },
+  components: { LineChart, ConditionTimeline, DamageScatterChart },
   setup() {
     const condNameMap = inject("condNameMap") as any;
     const getTargetHPAtTime = (t: number, hpHistory: any[]) => {
@@ -244,10 +269,13 @@ export default defineComponent({
     });
 
     const showDeaths = ref(false);
+    const showGhostRunner = ref(false);
 
     const playerDeaths = computed(() => {
-      const deathsList: { time: number; playerName: string }[] = [];
+      const deathsList: { time: number; playerName: string; lane: number }[] = [];
       for (const playerId in fightSummary.players) {
+        // Scatter eye buttons also hide this player's death markers on the graph.
+        if (hiddenPlayers.has(playerId)) continue;
         const player = fightSummary.players[playerId];
         if (player.deaths && player.deaths.length > 0) {
           player.deaths.forEach((deathTime) => {
@@ -257,10 +285,23 @@ export default defineComponent({
               deathsList.push({
                 time: relativeTime,
                 playerName: player.name,
+                lane: 0,
               });
             }
           });
         }
+      }
+      // Death Flags: assign separate annotation lanes for near-simultaneous deaths.
+      // Give deaths close together separate vertical label lanes. This keeps their
+      // labels individually clickable/readable even when their timeline lines coincide.
+      deathsList.sort((a, b) => a.time - b.time || a.playerName.localeCompare(b.playerName));
+      const laneLastTime: number[] = [];
+      const nearbyWindowSeconds = 12;
+      for (const death of deathsList) {
+        let lane = laneLastTime.findIndex((lastTime) => death.time - lastTime >= nearbyWindowSeconds);
+        if (lane < 0) lane = laneLastTime.length;
+        death.lane = lane;
+        laneLastTime[lane] = death.time;
       }
       return deathsList;
     });
@@ -307,6 +348,33 @@ export default defineComponent({
     });
     // END: NEW LOGIC FOR DYNAMIC X-AXIS
 
+    // Approximate a death-time DPS snapshot from the nearest saved graph sample.
+    // This is deliberately based on saved session data; it does not mutate the fight totals.
+    const deathDpsAt = (playerName: string, time: number): number => {
+      const player = Object.values(fightSummary.players).find((p: any) => p.name === playerName) as any;
+      if (!player) return 0;
+      const view = fightSummary.graphData?.[selectedTargetId.value];
+      const samples = view?.[player.id] || [];
+      if (!samples.length) return 0;
+      let nearest = samples[0];
+      for (const sample of samples) if (Math.abs(sample.time - time) < Math.abs(nearest.time - time)) nearest = sample;
+      return Math.round(nearest.rollingDPS || 0);
+    };
+
+    // Ghost Runner (graph): median DPS across productive 15-second buckets. Empty buckets are
+    // excluded so downtime does not drag down the typical productive-output estimate.
+    const ghostRunnerDps = (player: any): number => {
+      const buckets = new Map<number, number>();
+      for (const event of (player.skillUses || [])) {
+        const bucket = Math.floor(Number(event.timestamp || 0) / 15);
+        buckets.set(bucket, (buckets.get(bucket) || 0) + Number(event.totalDmg || 0));
+      }
+      const values = [...buckets.values()].filter((damage) => damage > 0).map((damage) => damage / 15).sort((a, b) => a - b);
+      if (!values.length) return 0;
+      const mid = Math.floor(values.length / 2);
+      return values.length % 2 ? values[mid] : (values[mid - 1] + values[mid]) / 2;
+    };
+
     const chartOptions = computed(() => {
       const annotations: Record<string, any> = {};
 
@@ -346,9 +414,9 @@ export default defineComponent({
             borderDash: [6, 4],
             label: {
               display: true,
-              content: `☠️ ${death.playerName}`,
+              content: `☠️ ${death.playerName} · ${deathDpsAt(death.playerName, death.time).toLocaleString()} DPS`,
               position: "start" as const,
-              yAdjust: 35,
+              yAdjust: 30 + death.lane * 22,
               backgroundColor: "rgba(15, 23, 42, 0.85)",
               color: "#fca5a5",
               font: { family: "Outfit, Inter, sans-serif", size: 10, weight: "bold" as const },
@@ -551,8 +619,11 @@ export default defineComponent({
       }
 
       for (const playerId in graphDataForView) {
+        // A hidden scatter player has no rolling DPS or Ghost Runner datasets.
+        // This filter does not affect the separate Damage Dealt page.
+        if (hiddenPlayers.has(playerId)) continue;
         const playerData = graphDataForView[playerId];
-        const isHidden = globalHideMode.value || hiddenPlayers.has(playerId);
+        const isHidden = globalHideMode.value;
         const player = fightSummary.players[playerId];
 
         let displayLabel = player?.name ?? "Unknown";
@@ -578,6 +649,25 @@ export default defineComponent({
           tension: 0.3,   // Curved lines for modern flowing aesthetic
           order: 1, // drawn in front of HP area
         });
+
+        if (showGhostRunner.value) {
+          const typicalDps = ghostRunnerDps(player);
+          if (typicalDps > 0) {
+            const ghostColor = displayColor.startsWith('#') ? displayColor : 'rgba(99, 102, 241, 0.35)';
+            datasets.push({
+              label: `${displayLabel} - Ghost Runner typical DPS`,
+              backgroundColor: ghostColor,
+              borderColor: ghostColor,
+              borderDash: [5, 5],
+              borderWidth: 2,
+              pointRadius: 0,
+              data: labels.map(() => typicalDps),
+              yAxisID: "y",
+              fill: false,
+              order: 2,
+            });
+          }
+        }
       }
 
       return { labels, datasets };
@@ -591,8 +681,21 @@ export default defineComponent({
         }
         return fightSummary.targets[selectedTargetId.value]?.conditions;
     });
-
+                
+    // Scatter plot receives every player with recorded skill-use events. Its own
+    // visibility toggles are independent from the main Damage Graph's filters.
+    // Scatter plot: receives skill hits for multiple players; shared hide state
+    // also filters their rolling DPS, Ghost Runner, and Death Flags above.
+    const scatterPlayers = computed(() => {
+      return Object.values(fightSummary.players)
+        .filter((player: any) => Array.isArray(player.skillUses) && player.skillUses.length > 0)
+        .map((player: any) => ({
+          stats: player,
+          color: getClassColor(player.talentName, player.talentColor) || getMabiNameColor(player.name),
+        }));
+    });
     return {
+      scatterPlayers,
       chartData,
       chartOptions,
       selectedTargetConditions,
@@ -600,7 +703,8 @@ export default defineComponent({
       xAxisConfig,
       selectedConditionId,
       conditionItems,
-      showDeaths
+      showDeaths,
+      showGhostRunner
     };
   },
 });

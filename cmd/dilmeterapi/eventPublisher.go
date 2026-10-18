@@ -49,8 +49,9 @@ type eventPublisher struct {
 	damageLogMu sync.Mutex
 
 	// HP tracking and spam prevention
-	hpLogStates  map[uint64]*entityHPLogState
-	lastCombatAt map[uint64]time.Time
+	hpLogStates         map[uint64]*entityHPLogState
+	lastCombatAt        map[uint64]time.Time
+	lastHealingCasterID uint64
 
 	// Condition tracking to prevent redundant log spam
 	activeConditions map[uint64]map[uint32]string
@@ -71,6 +72,7 @@ const (
 	opcodeEntityAppear            = 0x520c
 	opcodeEntitiesAppear          = 0x5334
 	opcodeCombatAction            = 0x7926
+	opcodeHealing                 = packet.OpCodeHealing
 	opcodeEffectDelayed           = 0x9095
 	opcodeEffect                  = 0x9093
 	opcodeCharacterCondition      = 0xa028
@@ -124,6 +126,9 @@ func newEventPublisher(ctx context.Context, packetCh <-chan *packet.GamePacket, 
 
 func (t *eventPublisher) ClearCache() {
 	t.aggregator.Clear()
+	t.Lock()
+	t.lastHealingCasterID = 0
+	t.Unlock()
 	logger.Println("Clear command received, aggregator state has been reset.")
 }
 
@@ -419,6 +424,7 @@ func (t *eventPublisher) logPacketAsEvent(p *packet.GamePacket) {
 	var events []iEvent
 
 	switch p.Op {
+
 	case opcodeCombatAction:
 		var pack *packet.CombatActionPackPacket
 		pack, err = packet.ParseCombatActionPackPacket(p)
@@ -460,7 +466,7 @@ func (t *eventPublisher) logPacketAsEvent(p *packet.GamePacket) {
 
 		// Now, create damage events for each hit using the correct skill ID.
 		for _, sub := range pack.SubPackets {
-			if sub.Hit != nil && (sub.Hit.Damage > 0 || sub.Hit.ManaDamage > 0) {
+			if sub.Hit != nil && (sub.Hit.Damage != 0 || sub.Hit.ManaDamage > 0) {
 				isCrit := (sub.Hit.Options & packet.CombatActionHitOptionsCritical) != 0
 				e := &eventDamage{
 					eventBase: eventBase{
@@ -480,6 +486,24 @@ func (t *eventPublisher) logPacketAsEvent(p *packet.GamePacket) {
 		}
 
 	case opcodeEffect:
+		// Opcode 0x9093 is shared by generic effects and the dedicated healing
+		// packet variants. Try the specific healing structure first; ordinary
+		// effect packets fall through to the existing parser below.
+		if heal, parseErr := packet.ParseHealingPacket(p); parseErr == nil {
+			switch heal.Type {
+			case 0x19, 0x28:
+				t.lastHealingCasterID = heal.EntityID
+			case 0x0A:
+				if t.lastHealingCasterID != 0 && heal.Amount > 0 {
+					e := &eventDamage{
+						eventBase: eventBase{EventId: eventIdDamage, At: p.At.Unix(), Id: strconv.FormatUint(t.lastHealingCasterID, 10)},
+						TargetId:  strconv.FormatUint(heal.EntityID, 10), SkillId: 0, Damage: -float32(heal.Amount), ManaDamage: 0,
+					}
+					events = append(events, e)
+				}
+			}
+			break
+		}
 		// Check against the structure of: Int, Byte, Int, Int, Long, Short, Byte
 		if len(p.Msg) < 7 ||
 			p.Msg[0].Type() != packet.MessageElemTypeInt ||
@@ -729,9 +753,10 @@ func (t *eventPublisher) logPacketAsEvent(p *packet.GamePacket) {
 			break
 		}
 
-		// Only log HP changes for enemies that are in our combat target list.
-		// Skip players, NPCs, props, or unengaged entities.
-		if t.aggregator.IsPlayerSafe(statPack.EntityId) || !t.aggregator.IsCombatTarget(statPack.EntityId) {
+		// Filter rule: Only track true player characters or engaged combat targets.
+		// Excludes unengaged town NPCs, environmental props, and passive objects.
+		_, isPlayer := playerCache.Get(statPack.EntityId)
+		if !isPlayer && !t.aggregator.IsCombatTarget(statPack.EntityId) {
 			break
 		}
 

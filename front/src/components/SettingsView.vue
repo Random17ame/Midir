@@ -7,11 +7,34 @@
 
       <v-tabs v-model="activeTab" bg-color="surface">
         <v-tab value="capture"><v-icon start>mdi-lan</v-icon> Capture</v-tab>
+        <v-tab value="history"><v-icon start>mdi-trending-up</v-icon> Personal Best</v-tab>
         <v-tab value="appearance"><v-icon start>mdi-palette</v-icon> Appearance</v-tab>
+        <v-tab value="experimental"><v-icon start>mdi-flask-outline</v-icon> Experimental</v-tab>
       </v-tabs>
 
       <v-card-text>
         <v-window v-model="activeTab">
+          <!-- Healing UI visibility only: capture and recorded healing remain intact. -->
+          <v-window-item value="experimental">
+            <v-card variant="outlined" class="pa-4">
+              <div class="text-h6 mb-2">Experimental features</div>
+              <v-switch v-model="showHealingTab" color="primary" label="Show Healing Done tab" hint="Healing attribution and overshield statistics are still under investigation. Hidden by default; saved healing data is never deleted." persistent-hint />
+            </v-card>
+          </v-window-item>
+          <v-window-item value="history">
+            <v-card variant="outlined" class="pa-4">
+              <div class="text-h6 mb-2">Personal Best Progress</div>
+              <div class="text-body-2 text-medium-emphasis mb-4">Compare individual skill DPS with older saved sessions. Only positive improvements are highlighted. Harmonic Saint history is excluded.</div>
+              <v-text-field v-model.number="personalBestSessionLimit" type="number" label="Maximum previous sessions to check" :min="5" :max="200" :step="5" variant="outlined" hint="Look back this many saved sessions (5–200), including sessions where the player is absent. Harmonic Saint-only history may extend the search." persistent-hint class="mb-4" />
+              <v-text-field v-model="personalBestHistoryFolder" label="Comparison history folder" placeholder="Default Midir saved sessions folder" variant="outlined" hint="Leave empty to use Midir's normal saved sessions. Or enter the full path of a folder containing saved .ndjson sessions." persistent-hint class="mb-2" />
+              <div class="d-flex ga-2 align-center flex-wrap">
+                <v-btn color="primary" variant="tonal" prepend-icon="mdi-folder-open" :loading="historyFolderPicking" @click="browseHistoryFolder">Browse folder</v-btn>
+                <v-btn variant="text" @click="personalBestHistoryFolder = ''">Use default folder</v-btn>
+              </div>
+              <v-alert v-if="historyFolderError" class="mt-3" type="warning" variant="tonal" density="compact">{{ historyFolderError }}</v-alert>
+              <div class="text-caption text-medium-emphasis mt-3">These settings affect saved-session comparisons only, not live parsing or where new sessions are saved.</div>
+            </v-card>
+          </v-window-item>
           <!-- CAPTURE TAB -->
           <v-window-item value="capture">
             <!-- CARD 1: CAPTURE CONFIGURATION -->
@@ -492,9 +515,11 @@
   </v-dialog>
 </template>
 
+<!-- Settings include Personal Best search limits/folder and experimental Healing visibility. -->
 <script lang="ts">
 import { defineComponent, computed, ref, onMounted, onUnmounted } from "vue";
-import { showClassColorsForVisiblePlayers, dpsMeterFillMode, socket, fightSummary } from "@/store";
+import { showClassColorsForVisiblePlayers, dpsMeterFillMode, socket, fightSummary, personalBestSessionLimit, personalBestHistoryFolder, showHealingTab } from "@/store";
+import { pickPersonalBestHistoryFolder } from "@/apicall";
 import ColorSettings from "./ColorSettings.vue";
 import ClassColorSettings from "./ClassColorSettings.vue";
 
@@ -506,6 +531,15 @@ export default defineComponent({
   },
   setup() {
     const activeTab = ref("capture");
+    const historyFolderPicking = ref(false);
+    const historyFolderError = ref("");
+    const browseHistoryFolder = async () => {
+      historyFolderPicking.value = true;
+      historyFolderError.value = "";
+      try { personalBestHistoryFolder.value = await pickPersonalBestHistoryFolder(); }
+      catch (error) { historyFolderError.value = "Folder chooser is unavailable on this system. Enter the folder path above instead."; }
+      finally { historyFolderPicking.value = false; }
+    };
     const showEntitiesDialog = ref(false);
 
     const searchQuery = ref("");
@@ -815,6 +849,8 @@ export default defineComponent({
 
     return {
       activeTab,
+      personalBestSessionLimit, personalBestHistoryFolder, historyFolderPicking, historyFolderError, browseHistoryFolder,
+      showHealingTab,
       showClassColorsForVisiblePlayers,
       dpsMeterFillMode,
 
