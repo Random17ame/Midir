@@ -71,6 +71,10 @@ export async function renameSession(
   });
 }
 
+export async function revealSessionFile(sessionId: string): Promise<void> {
+  await httpCall<void>(`/api/sessions/${encodeURIComponent(sessionId)}/reveal`, { method: "POST" });
+}
+
 export async function deleteSession(sessionId: string): Promise<void> {
   await httpCall<void>(`/api/sessions/${sessionId}`, {
     method: "DELETE",

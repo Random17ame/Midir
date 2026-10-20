@@ -30,6 +30,7 @@ func sessionRouter(sm *SessionManager) http.Handler {
 	r.Route("/{sessionID}", func(r chi.Router) {
 		r.Put("/", handleRenameSession(sm))
 		r.Get("/log", handleGetSessionLog(sm))
+		r.Post("/reveal", handleRevealSessionFile(sm))
 		r.Delete("/", handleDeleteSession(sm))
 		r.Get("/summary", handleGetSessionSummary(sm))
 		r.Post("/migrate", handleMigrateSession(sm))
@@ -190,6 +191,7 @@ func GenerateSummaryFromFile(logPath string) (*FightSummary, error) {
 	entitiesInLog := make(map[string]eventEntityAppear)
 	var savedSessionSummary *SessionSummaryData
 	scanner := bufio.NewScanner(file)
+	scanner.Buffer(make([]byte, 64*1024), 32*1024*1024) // Session summaries can exceed the default 64 KiB scanner limit.
 	for scanner.Scan() {
 		var event eventBase
 		if err := json.Unmarshal(scanner.Bytes(), &event); err != nil {
@@ -216,6 +218,7 @@ func GenerateSummaryFromFile(logPath string) (*FightSummary, error) {
 	// Reset file reader to the beginning for the next pass.
 	file.Seek(0, 0)
 	scanner = bufio.NewScanner(file)
+	scanner.Buffer(make([]byte, 64*1024), 32*1024*1024) // Session summaries can exceed the default 64 KiB scanner limit.
 
 	// PASS 2: Collect all damage events AND track condition history
 	var allDamageEvents []eventDamage
@@ -1271,5 +1274,36 @@ func handlePersonalBestPickFolder() http.HandlerFunc {
 			return
 		}
 		respondWithJSON(w, http.StatusOK, map[string]string{"folder": folder})
+	}
+}
+
+// Reveal a saved session's exact NDJSON in the native file manager.
+// Never accept arbitrary paths from the browser.
+func handleRevealSessionFile(sm *SessionManager) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := chi.URLParam(r, "sessionID")
+		if id == "" || id == liveSessionFilename || filepath.Base(id) != id || strings.ContainsAny(id, `/\`) || !strings.HasSuffix(strings.ToLower(id), ".ndjson") {
+			respondWithError(w, http.StatusBadRequest, "Invalid saved session ID")
+			return
+		}
+		path := filepath.Join(sm.logDirectory, id)
+		if fi, err := os.Stat(path); err != nil || fi.IsDir() {
+			respondWithError(w, http.StatusNotFound, "Session file not found")
+			return
+		}
+		var cmd *exec.Cmd
+		switch runtime.GOOS {
+		case "windows":
+			cmd = exec.Command("explorer.exe", "/select,"+path)
+		case "darwin":
+			cmd = exec.Command("open", "-R", path)
+		default:
+			cmd = exec.Command("xdg-open", filepath.Dir(path))
+		}
+		if err := cmd.Start(); err != nil {
+			respondWithError(w, http.StatusInternalServerError, "Unable to open file manager: "+err.Error())
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
 	}
 }

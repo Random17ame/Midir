@@ -67,6 +67,8 @@ type Session struct {
 	pcapWriter *pcapgo.Writer `json:"-"`
 	pcapFile   *os.File       `json:"-"`
 	events     []iEvent
+	eventBytes int
+	eventTypes map[string]int
 }
 
 type SessionManager struct {
@@ -110,10 +112,11 @@ func (sm *SessionManager) StartLiveSession() (*Session, error) {
 
 	now := time.Now()
 	s := &Session{
-		ID:        liveSessionFilename,
-		Name:      "Live Session",
-		StartTime: now.Unix(),
-		events:    make([]iEvent, 0, 1000),
+		ID:         liveSessionFilename,
+		Name:       "Live Session",
+		StartTime:  now.Unix(),
+		events:     make([]iEvent, 0, 1000),
+		eventTypes: make(map[string]int),
 	}
 
 	if sm.recordPcap {
@@ -195,6 +198,11 @@ func (sm *SessionManager) SaveLiveSession(name string) error {
 	summaryData.StartTime = sm.currentSession.StartTime
 
 	if err == nil && summary != nil {
+		// A long-running application can have multiple fights. Use the actual
+		// combat encounter start, not the process's live-session creation time.
+		if summary.StartTime > 0 {
+			summaryData.StartTime = summary.StartTime
+		}
 		summaryData.Duration = summary.EncounterDuration
 		summaryData.TotalDamage = summary.TotalDamage
 
@@ -258,10 +266,11 @@ func (sm *SessionManager) SaveLiveSession(name string) error {
 		})
 	}
 
-	newF, err := os.Create(newPath)
+	newF, err := os.CreateTemp(sm.logDirectory, ".midir-saving-*.tmp")
 	if err != nil {
 		return fmt.Errorf("failed to create permanent session file: %w", err)
 	}
+	defer os.Remove(newF.Name()) // Only removes failed/incomplete saves.
 	defer newF.Close()
 
 	sumEvent := eventSessionSummary{
@@ -278,19 +287,25 @@ func (sm *SessionManager) SaveLiveSession(name string) error {
 	}
 
 	// Write cached in-memory events to log file
-	writer := bufio.NewWriter(newF)
+	writer := bufio.NewWriterSize(newF, 1024*1024)
+	encoder := json.NewEncoder(writer)
 	for _, e := range sm.currentSession.events {
-		b, err := json.Marshal(e)
-		if err != nil {
-			logger.Println("Failed to marshal event during save:", err)
-			continue
-		}
-		if _, err := writer.Write(append(b, '\n')); err != nil {
-			return fmt.Errorf("failed to write event: %w", err)
+		if err := encoder.Encode(e); err != nil {
+			return fmt.Errorf("failed to encode session event: %w", err)
 		}
 	}
 	if err := writer.Flush(); err != nil {
 		return fmt.Errorf("failed to flush event writer: %w", err)
+	}
+
+	if err := newF.Sync(); err != nil {
+		return fmt.Errorf("failed to sync session: %w", err)
+	}
+	if err := newF.Close(); err != nil {
+		return fmt.Errorf("failed to close session: %w", err)
+	}
+	if err := os.Rename(newF.Name(), newPath); err != nil {
+		return fmt.Errorf("failed to publish saved session: %w", err)
 	}
 
 	if sm.recordPcap {
@@ -328,6 +343,7 @@ func (sm *SessionManager) GetAllSessions() ([]*Session, error) {
 		logFile, err := os.Open(filepath.Join(sm.logDirectory, file.Name()))
 		if err == nil {
 			scanner := bufio.NewScanner(logFile)
+			scanner.Buffer(make([]byte, 64*1024), 32*1024*1024) // Session summaries can exceed the default 64 KiB scanner limit.
 			// Saved summaries include skill-use arrays and can exceed Scanner's
 			// default 64 KiB token limit. Without this, successfully saved files
 			// may disappear from the session list.
@@ -435,6 +451,7 @@ func updateSessionHeaderName(filePath string, newName string) error {
 
 	var lines []string
 	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 64*1024), 32*1024*1024) // Session summaries can exceed the default 64 KiB scanner limit.
 	if scanner.Scan() {
 		firstLine := scanner.Text()
 		var summaryEvent eventSessionSummary
@@ -525,6 +542,7 @@ func (sm *SessionManager) RenameSession(sessionID, newName string) (*Session, er
 	logFile, err := os.Open(filepath.Join(sm.logDirectory, newNdjsonFilename))
 	if err == nil {
 		scanner := bufio.NewScanner(logFile)
+		scanner.Buffer(make([]byte, 64*1024), 32*1024*1024) // Session summaries can exceed the default 64 KiB scanner limit.
 		if scanner.Scan() {
 			var summaryEvent eventSessionSummary
 			if err := json.Unmarshal(scanner.Bytes(), &summaryEvent); err == nil && summaryEvent.EventId == eventIdSessionSummary {
@@ -563,6 +581,12 @@ func (sm *SessionManager) WriteEventToLog(e iEvent) error {
 		return nil
 	}
 	s.events = append(s.events, e)
+	// Diagnostics are incremental: no costly re-encoding on every 1s status tick.
+	if s.eventTypes != nil {
+		s.eventTypes[getEventName(e.GetEventId())]++
+	}
+	// Approximate byte budget. Exact size is determined only when saving.
+	s.eventBytes += 160
 	return nil
 }
 
@@ -631,6 +655,7 @@ func (sm *SessionManager) runMigration() error {
 				continue
 			}
 			scanner := bufio.NewScanner(f)
+			scanner.Buffer(make([]byte, 64*1024), 32*1024*1024) // Session summaries can exceed the default 64 KiB scanner limit.
 			if scanner.Scan() {
 				var firstEvent eventBaseForMigration
 				if err := json.Unmarshal(scanner.Bytes(), &firstEvent); err == nil {
@@ -698,6 +723,8 @@ func (sm *SessionManager) MigrateSession(sessionID string) error {
 	}
 
 	scanner := bufio.NewScanner(oldF)
+
+	scanner.Buffer(make([]byte, 64*1024), 32*1024*1024) // Session summaries can exceed the default 64 KiB scanner limit.
 	hasOldSummary := false
 	if scanner.Scan() {
 		var firstEvent eventBase
@@ -767,7 +794,7 @@ func (sm *SessionManager) MigrateSession(sessionID string) error {
 	})
 
 	newPath := oldPath + ".tmp"
-	newF, err := os.Create(newPath)
+	newF, err := os.CreateTemp(sm.logDirectory, ".midir-saving-*.tmp")
 	if err != nil {
 		oldF.Close()
 		return fmt.Errorf("failed to create temporary migrated file: %w", err)
@@ -784,6 +811,7 @@ func (sm *SessionManager) MigrateSession(sessionID string) error {
 
 	oldF.Seek(0, 0)
 	oldScanner := bufio.NewScanner(oldF)
+	oldScanner.Buffer(make([]byte, 64*1024), 32*1024*1024) // Session summaries can exceed the default 64 KiB scanner limit.
 	isFirstLine := true
 	for oldScanner.Scan() {
 		if isFirstLine {

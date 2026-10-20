@@ -1,3 +1,5 @@
+import { findGate1Attempts } from './gate1Encounter';
+import { findGlennAttempts } from './glennEncounter';
 import {
   PlayerStats,
   DamageBreakdown,
@@ -29,6 +31,10 @@ export interface GroupItem {
 }
 
 export const GROUPED_ENCOUNTERS = [
+  { bossRaceId: 7585, groupName: "Glenn Bearna: Primeval Winter" },
+  { bossRaceId: 195012, groupName: "Rabbie Phantasm: Temptation's Path" },
+  { bossRaceId: 193359, groupName: "Crom Bas Normal — Giga Glas Ghaibhleann" },
+  { bossRaceId: 193364, groupName: "Crom Bas Normal — Irusan" },
   { bossRaceId: 7615, groupName: "Bri Leith: Gate 4" },
   { bossRaceId: 7603, groupName: "Bri Leith: Gate 3" },
   { bossRaceId: 7600, partnerRaceId: 7601, groupName: "Bri Leith: Gate 1" },
@@ -67,6 +73,18 @@ export function getGroupMemberTargetIds(
     return [bossTargetId];
   }
 
+  // Selecting the logical Vertrag boss means the two boss entities only;
+  // phase giants are displayed in the encounter group but are not boss DPS.
+  // These encounters expose a single boss as their selectable damage target;
+  // adds (including the named succubi) remain inspectable, not boss DPS.
+  if ([195012, 193359, 193364].includes(Number(bossTarget.raceId))) return [bossTargetId];
+  if (bossTarget.raceId === 7585) {
+    return findGlennAttempts(targetsMap).find(a => a.firstEntityId === bossTargetId)?.entityIds || [bossTargetId];
+  }
+  if (bossTarget.raceId === 7600) {
+    return findGate1Attempts(targetsMap).find(a=>a.firstEntityId===bossTargetId)?.entityIds || [bossTargetId];
+  }
+
   const allTargets = Object.entries(targetsMap).map(([id, stats]) => ({
     id,
     ...stats,
@@ -79,17 +97,26 @@ export function getGroupMemberTargetIds(
       : Infinity;
 
   let partnerTarget: any = null;
-  if (bossDef.partnerRaceId) {
-    partnerTarget = allTargets.find(
-      (t) =>
-        t.raceId === bossDef.partnerRaceId && (t.startTime || 0) >= bossStartTime
-    );
-    if (partnerTarget) {
-      bossEndTime =
-        partnerTarget.seenDead || partnerTarget.disappeared
-          ? partnerTarget.endTime || 0
-          : Infinity;
+  if (bossDef.partnerRaceId === 7601 && bossDef.bossRaceId === 7600) {
+    const attempt = findGate1Attempts(targetsMap).find(a => a.firstEntityId === bossTargetId);
+    if (attempt?.replacementEntityId) {
+      partnerTarget = allTargets.find(t => t.id === attempt.replacementEntityId);
+      bossEndTime = Number(partnerTarget?.endTime) || Infinity;
+    } else {
+      // A first-form wipe must never absorb later unrelated giants or boss attempts.
+      bossEndTime = Number(bossTarget.endTime) || Infinity;
     }
+  } else if (bossDef.partnerRaceId) {
+    partnerTarget = allTargets.find(t => t.raceId === bossDef.partnerRaceId &&
+      (t.startTime || 0) >= bossStartTime);
+    if (partnerTarget) bossEndTime = Number(partnerTarget.endTime) || Infinity;
+  }
+  // Exclude any entities spawned on/after the next first-form boss attempt.
+  if (bossDef.bossRaceId === 7600) {
+    const nextAttemptStart = findGate1Attempts(targetsMap)
+      .filter(a => a.startUnixSeconds > bossStartTime)
+      .map(a => a.startUnixSeconds).sort((a,b)=>a-b)[0];
+    if (nextAttemptStart !== undefined) bossEndTime = Math.min(bossEndTime, nextAttemptStart - 0.001);
   }
 
   const members = allTargets.filter((t) => {

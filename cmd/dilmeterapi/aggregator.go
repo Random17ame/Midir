@@ -60,9 +60,11 @@ type Aggregator struct {
 	lastHealingCaster map[uint64]healingCasterHint
 	// Recent qualifying casts by Harmonic Saints, including untargeted actions.
 	// Used only to disambiguate AdditionalHP gains when multiple Saints are known.
-	recentShieldCasts   map[uint64]healingCasterHint
-	lastHealingCasterID uint64
-	lastHealingCasterAt int64
+	recentShieldCasts map[uint64]healingCasterHint
+	// Most recent Saint healing skill, including untargeted casts.
+	recentSaintHealingCasts map[uint64]healingCasterHint
+	lastHealingCasterID     uint64
+	lastHealingCasterAt     int64
 	// Last observed Veil of Life state per recipient; refreshed by condition 999.
 	veilStates map[uint64]veilState
 }
@@ -99,6 +101,10 @@ func isOvershieldSkill(skillID uint16) bool {
 
 // Known abilities capable of direct healing; other unclassified restorations
 // are retained as Uncategorized Healing or Misc. Anonymous Healing.
+func isHarmonicSaintHealingSkill(id uint16) bool {
+	return id >= 59000 && id <= 59008
+}
+
 func isKnownHealingSkill(id uint16) bool {
 	switch id {
 	case 30006, 30008, 59000, 59001, 59002, 59003, 59004, 59006, 27200, 27201, 27204, 27205, 27206, 35121:
@@ -135,6 +141,7 @@ func NewAggregator() *Aggregator {
 		lastHealingCaster:       make(map[uint64]healingCasterHint),
 		veilStates:              make(map[uint64]veilState),
 		recentShieldCasts:       make(map[uint64]healingCasterHint),
+		recentSaintHealingCasts: make(map[uint64]healingCasterHint),
 	}
 }
 
@@ -648,8 +655,14 @@ func (a *Aggregator) observeVeilOfLife(p *packet.CharacterConditionPacket, at ti
 	if !hasCapacity || capacity < 0 || capacity > 100000000 {
 		return
 	}
-	// Determine source, preferring the condition's explicit attacker.
-	casterID := p.AttackerId
+	// Veil of Life belongs to the only identified Harmonic Saint, regardless
+	// of a packet's attacker/caster hint. These hints can refer to proxies.
+	casterID := uint64(0)
+	if saints := a.harmonicSaintIDs(); len(saints) == 1 {
+		casterID = saints[0]
+	} else {
+		casterID = p.AttackerId
+	}
 	if casterID != 0 {
 		if _, ok := playerCache.Get(casterID); !ok {
 			casterID = 0
@@ -671,6 +684,15 @@ func (a *Aggregator) observeVeilOfLife(p *packet.CharacterConditionPacket, at ti
 	}
 	if skillID == 0 && previous.Active && previous.CasterID == casterID {
 		skillID = previous.SkillID
+	}
+	// In a one-Saint party, an HS shield skill can be credited even if the
+	// cast packet used another caster ID. Do not infer a skill from capacity.
+	if skillID == 0 {
+		if saints := a.harmonicSaintIDs(); len(saints) == 1 && casterID == saints[0] {
+			if hint := a.lastHealingCaster[p.Id]; isOvershieldSkill(hint.SkillID) && at.Unix() >= hint.At && at.Unix()-hint.At <= healingAttributionWindowSeconds {
+				skillID = hint.SkillID
+			}
+		}
 	}
 	delta := capacity
 	if previous.Active {
@@ -1028,6 +1050,9 @@ func (a *Aggregator) processOvershieldCasterHint(p *packet.GamePacket) {
 	defer a.mu.Unlock()
 	// A qualifying skill activation is a useful clue even when the cast
 	// has no direct damage hit or target (e.g. support-skill effects).
+	if isHarmonicSaintHealingSkill(skillID) {
+		a.recentSaintHealingCasts[casterID] = healingCasterHint{CasterID: casterID, SkillID: skillID, At: p.At.Unix()}
+	}
 	if isOvershieldSkill(skillID) {
 		a.recentShieldCasts[casterID] = healingCasterHint{CasterID: casterID, SkillID: skillID, At: p.At.Unix()}
 	}
@@ -1096,7 +1121,24 @@ func (a *Aggregator) processDedicatedHealingPacket(p *packet.GamePacket) {
 		}
 		hint, hasHint := a.lastHealingCaster[heal.EntityID]
 		freshSkill := hasHint && isKnownHealingSkill(hint.SkillID) && p.At.Unix() >= hint.At && p.At.Unix()-hint.At <= healingAttributionWindowSeconds
-		if stats == nil && freshSkill {
+		// Only a recognized HS skill may use the unique-Saint fallback.
+		// A generic healing hint (potions, glyphs, astrology) is insufficient.
+		soleSaintSkill := uint16(0)
+		if saints := a.harmonicSaintIDs(); len(saints) == 1 {
+			saintID := saints[0]
+			if freshSkill && isHarmonicSaintHealingSkill(hint.SkillID) {
+				soleSaintSkill = hint.SkillID
+			} else if cast := a.recentSaintHealingCasts[saintID]; cast.CasterID == saintID && isKnownHealingSkill(cast.SkillID) &&
+				p.At.Unix() >= cast.At && p.At.Unix()-cast.At <= healingAttributionWindowSeconds {
+				soleSaintSkill = cast.SkillID
+			}
+			if stats == nil && soleSaintSkill != 0 {
+				stats = a.getOrCreatePlayerStatsFromCache(saintID)
+			}
+		}
+		// Unique-Saint ownership takes precedence over even an explicit caster
+		// for recognized HS skills. Never apply this to unrelated healing.
+		if soleSaintSkill != 0 {
 			if saints := a.harmonicSaintIDs(); len(saints) == 1 {
 				stats = a.getOrCreatePlayerStatsFromCache(saints[0])
 			}
@@ -1120,7 +1162,9 @@ func (a *Aggregator) processDedicatedHealingPacket(p *packet.GamePacket) {
 		// recent targeted skill candidate agrees with the identified caster;
 		// other confirmed healing stays skill 0 (Uncategorized Healing).
 		skillID := uint16(0)
-		if freshSkill && (stats.ID == strconv.FormatUint(hint.CasterID, 10) || (len(a.harmonicSaintIDs()) == 1 && stats.ID == strconv.FormatUint(a.harmonicSaintIDs()[0], 10))) {
+		if soleSaintSkill != 0 {
+			skillID = soleSaintSkill
+		} else if freshSkill && stats.ID == strconv.FormatUint(hint.CasterID, 10) {
 			skillID = hint.SkillID
 		}
 		temp := &packet.CombatActionPacket{Hit: &packet.CombatActionPacketHitInfo{Damage: amount}}
@@ -1761,6 +1805,7 @@ func (a *Aggregator) Clear() {
 	a.lastKnownHP = make(map[uint64]TargetHPPoint)
 	a.lastHealingCaster = make(map[uint64]healingCasterHint)
 	a.recentShieldCasts = make(map[uint64]healingCasterHint)
+	a.recentSaintHealingCasts = make(map[uint64]healingCasterHint)
 	a.lastHealingCasterID = 0
 	a.lastHealingCasterAt = 0
 	a.veilStates = make(map[uint64]veilState)
@@ -1799,6 +1844,22 @@ func (a *Aggregator) IsPlayerSafe(entityID uint64) bool {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 	return a.isPlayer(entityID)
+}
+
+// CombatRecordingActive follows active combat-target presence, not background heals.
+// Called by the event logger after the aggregator has processed the packet.
+func (a *Aggregator) CombatRecordingActive() bool {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	for id, intervals := range a.targetPresenceIntervals {
+		if a.deadEntities[id] {
+			continue
+		}
+		if len(intervals) != 0 && intervals[len(intervals)-1].End == 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // IsCombatTarget checks if an entity ID is tracked in the active combat target timestamps.
