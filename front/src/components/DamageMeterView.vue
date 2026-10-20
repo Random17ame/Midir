@@ -164,52 +164,71 @@
 
                       <v-divider class="my-1" style="border-color: rgba(255,255,255,0.1);"></v-divider>
 
-                      <div
-                        v-for="subItem in expandedGroup.targets"
-                        :key="subItem.id"
+                      <!-- Gate 1 only: nest both Vertrag forms without altering the logical boss selection. -->
+                      <div v-if="expandedGroup.isGate1BossGroup"
+                        class="target-menu-item cursor-pointer phase-section-header px-4 py-3 d-flex justify-space-between align-center"
+                        @click="togglePhaseSection(expandedGroup.id + '_vertrag')">
+                        <span class="text-white font-weight-bold"><v-icon :icon="openPhaseSections.includes(expandedGroup.id + '_vertrag') ? 'mdi-chevron-down' : 'mdi-chevron-right'" size="small"></v-icon>
+                          Vertrag of the Deep Roots ({{ expandedGroup.bossMembers.length }})</span>
+                        <span class="text-amber text-caption">{{ formatCompact(expandedGroup.damage) }}</span>
+                      </div>
+                      <template v-if="!expandedGroup.isGate1BossGroup || openPhaseSections.includes(expandedGroup.id + '_vertrag')">
+                      <!-- Boss lineage stays pinned above phase adds. -->
+                      <div v-for="subItem in expandedGroup.bossMembers || []" :key="subItem.id"
                         class="target-menu-item cursor-pointer position-relative overflow-hidden"
-                        :class="[
-                          getTargetClass(subItem.raceId),
-                          selectedTargetId === subItem.id ? 'active-item' : ''
-                        ]"
-                        @click="selectGroupTarget(subItem)"
-                      >
+                        :class="[getTargetClass(subItem.raceId), selectedTargetId === subItem.id ? 'active-item' : '']"
+                        @click="selectGroupTarget(subItem)">
                         <div class="target-item-content d-flex justify-space-between align-center px-4 pt-3 pb-2">
-                          <span class="target-col-name font-weight-bold d-flex align-center text-white">
-                            <span>{{ subItem.rawName || subItem.name }}<span v-if="subItem.raceId" class="text-grey font-weight-normal ml-1">({{ subItem.raceId }})</span></span>
-                            <v-tooltip
-                              v-if="subItem.seenAppear === false"
-                              location="top"
-                              text="Spawn not captured by parser."
-                            >
-                              <template v-slot:activator="{ props: tooltipProps }">
-                                <v-icon
-                                  v-bind="tooltipProps"
-                                  icon="mdi-alert-circle-outline"
-                                  color="warning"
-                                  size="small"
-                                  class="ml-1 flex-shrink-0"
-                                ></v-icon>
-                              </template>
-                            </v-tooltip>
+                          <span class="target-col-name font-weight-bold text-white">{{ subItem.rawName || subItem.name }} ({{ subItem.raceId }})
+                            <span class="text-caption text-teal-lighten-2 ml-2">{{ subItem.raceId === 7600 ? '100–50%' : subItem.raceId === 7601 ? '50–0%' : subItem.raceId === 7585 ? 'Stage 1' : subItem.raceId === 7586 ? 'Stage 2' : subItem.raceId === 7587 ? 'Final stage' : 'Boss' }}</span>
                           </span>
-                          
-                          <span v-if="subItem.hasHpUpdates" class="hp-text text-caption text-grey-lighten-1 font-weight-medium text-right">
-                            {{ formatCompact(subItem.currentHp) }} / {{ formatCompact(subItem.maxHp) }}
-                            <span class="text-grey ml-1">({{ subItem.hpPercent.toFixed(1) }}%)</span>
-                          </span>
-                          <span v-else class="target-col-damage font-weight-bold text-amber text-right">
-                            {{ formatCompact(subItem.damage) }}
-                          </span>
+                          <span v-if="subItem.hasHpUpdates" class="hp-text text-caption text-grey-lighten-1 text-right">{{ formatCompact(subItem.currentHp) }} / {{ formatCompact(subItem.maxHp) }} ({{ subItem.hpPercent.toFixed(1) }}%)</span>
+                          <span v-else class="text-amber">{{ formatCompact(subItem.damage) }}</span>
                         </div>
+                        <div v-if="subItem.hasHpUpdates" class="hp-bar-separator w-100"><div class="hp-bar-separator-fill hp-enemy" :style="{width:subItem.hpPercent + '%'}"></div></div>
+                      </div>
 
-                        <!-- HP Bar Separator -->
-                        <div v-if="subItem.hasHpUpdates" class="hp-bar-separator w-100">
-                          <div
-                            class="hp-bar-separator-fill hp-enemy"
-                            :style="{ width: subItem.hpPercent + '%' }"
-                          ></div>
+                      </template>
+
+                      <div v-for="section in expandedGroup.phaseSections || []" :key="section.id">
+                        <div class="target-menu-item cursor-pointer phase-section-header px-4 py-3 d-flex justify-space-between align-center"
+                          @click="togglePhaseSection(section.id)">
+                          <span class="text-white font-weight-bold"><v-icon :icon="openPhaseSections.includes(section.id) ? 'mdi-chevron-down' : 'mdi-chevron-right'" size="small"></v-icon>
+                            {{ section.label }} ({{ section.targets.length }})</span>
+                          <span class="text-amber text-caption">{{ formatCompact(section.damage) }}</span>
                         </div>
+                        <template v-if="openPhaseSections.includes(section.id)">
+                          <div v-for="subItem in section.targets" :key="subItem.id"
+                            class="target-menu-item cursor-pointer position-relative overflow-hidden pl-3"
+                            :class="[getTargetClass(subItem.raceId), selectedTargetId === subItem.id ? 'active-item' : '']"
+                            @click="selectGroupTarget(subItem)">
+                            <div class="target-item-content d-flex justify-space-between align-center px-4 pt-3 pb-2">
+                              <span class="target-col-name text-white">{{ subItem.rawName || subItem.name }} ({{ subItem.raceId }})</span>
+                              <span v-if="subItem.hasHpUpdates" class="hp-text text-caption text-grey-lighten-1 text-right">{{ formatCompact(subItem.currentHp) }} / {{ formatCompact(subItem.maxHp) }} ({{ subItem.hpPercent.toFixed(1) }}%)</span>
+                              <span v-else class="text-amber">{{ formatCompact(subItem.damage) }}</span>
+                            </div>
+                            <div v-if="subItem.hasHpUpdates" class="hp-bar-separator w-100"><div class="hp-bar-separator-fill hp-enemy" :style="{width:subItem.hpPercent + '%'}"></div></div>
+                          </div>
+                        </template>
+                      </div>
+                      <div v-if="expandedGroup.miscellaneous?.length">
+                        <div class="target-menu-item cursor-pointer phase-section-header px-4 py-3 d-flex justify-space-between align-center"
+                          @click="togglePhaseSection(expandedGroup.id + '_misc')">
+                          <span class="text-white font-weight-bold"><v-icon :icon="openPhaseSections.includes(expandedGroup.id + '_misc') ? 'mdi-chevron-down' : 'mdi-chevron-right'" size="small"></v-icon>
+                            Other enemies ({{ expandedGroup.miscellaneous.length }})</span>
+                        </div>
+                        <template v-if="openPhaseSections.includes(expandedGroup.id + '_misc')">
+                          <div v-for="subItem in expandedGroup.miscellaneous" :key="subItem.id"
+                            class="target-menu-item cursor-pointer pl-3"
+                            :class="[getTargetClass(subItem.raceId), selectedTargetId === subItem.id ? 'active-item' : '']"
+                            @click="selectGroupTarget(subItem)">
+                            <div class="target-item-content d-flex justify-space-between align-center px-4 pt-3 pb-2">
+                              <span class="text-white">{{ subItem.rawName || subItem.name }} ({{ subItem.raceId }})</span>
+                              <span v-if="subItem.hasHpUpdates" class="hp-text text-caption text-grey-lighten-1 text-right">{{ formatCompact(subItem.currentHp) }} / {{ formatCompact(subItem.maxHp) }} ({{ subItem.hpPercent.toFixed(1) }}%)</span>
+                              <span v-else class="text-amber">{{ formatCompact(subItem.damage) }}</span>
+                            </div>
+                          </div>
+                        </template>
                       </div>
                     </div>
                   </div>
@@ -405,6 +424,9 @@ import {
   aggregateGroupConditions,
   GROUPED_ENCOUNTERS,
 } from "@/utils/targetGrouping";
+import { findGate1Attempts, gate1EffectiveHp } from "@/utils/gate1Encounter";
+import { findGlennAttempts } from "@/utils/glennEncounter";
+import { findMechanicGroups } from "@/utils/mechanicGroups";
 import SessionPanel from "@/components/SessionPanel.vue";
 import ApplyDamageBySkillComponent from "@/components/applyDamageBySkill.vue";
 import ApplyHealingBySkillComponent from "@/components/applyHealingBySkill.vue";
@@ -539,6 +561,12 @@ export default defineComponent({
     // Target grouping state
     const isTargetMenuOpen = ref(false);
     const expandedGroup = ref<any>(null);
+    const openPhaseSections = ref<string[]>([]);
+    const togglePhaseSection = (id: string) => {
+      openPhaseSections.value = openPhaseSections.value.includes(id)
+        ? openPhaseSections.value.filter(value => value !== id)
+        : [...openPhaseSections.value, id];
+    };
 
     const targetList = computed(() => {
       const totalDamageByTarget: Record<string, number> = {};
@@ -638,7 +666,7 @@ export default defineComponent({
       // Check if parse contains any entity deaths (seenDead)
       const hasAnyEntityDeath = targets.some(t => t.seenDead);
 
-      if (!hasAnyEntityDeath) {
+      if (!hasAnyEntityDeath && !targets.some(t => GROUPED_ENCOUNTERS.some(g => g.bossRaceId === t.raceId))) {
         // Return normal sorted flat list
         targets.sort((a, b) => {
           const startA = a.startTime || 0;
@@ -677,33 +705,35 @@ export default defineComponent({
         const bosses = targets.filter(t => t.raceId === bossDef.bossRaceId);
 
         for (const bossTarget of bosses) {
-          // Special reset detection check for Phase 1 boss despawning without reaching 50% HP
-          if (bossDef.bossRaceId === 7600) {
-            const rawStats = fightSummary.targets[bossTarget.id];
-            const round3 = (num: number) => Math.round(num * 1000) / 1000;
-            let reached50 = round3(bossTarget.hpPercent) <= 50;
-            if (!reached50 && rawStats && rawStats.hpHistory) {
-              reached50 = rawStats.hpHistory.some(pt => pt.maxHp > 0 && round3((pt.currentHp / pt.maxHp) * 100) <= 50);
-            }
-
-            const ended = bossTarget.seenDead || bossTarget.disappeared;
-            if (ended && !reached50) {
-              // Run reset! Skip grouping this bossTarget
-              continue;
-            }
-          }
-
+          // Keep both completed and failed attempts visible; never suppress the
+          // first form just because it ended before 50% HP.
           const bossStartTime = bossTarget.startTime || 0;
           let bossEndTime = (bossTarget.seenDead || bossTarget.disappeared) ? (bossTarget.endTime || 0) : Infinity;
 
           let partnerTarget: any = null;
-          if (bossDef.partnerRaceId) {
-            // Look for partner spawning after bossStartTime
-            partnerTarget = targets.find(t => t.raceId === bossDef.partnerRaceId && (t.startTime || 0) >= bossStartTime);
-            if (partnerTarget) {
-              // The encounter ends when the partner dies or disappears
-              bossEndTime = (partnerTarget.seenDead || partnerTarget.disappeared) ? (partnerTarget.endTime || 0) : Infinity;
+          if (bossDef.bossRaceId === 7585) {
+            const attempt = findGlennAttempts(fightSummary.targets || {}).find(a => a.firstEntityId === bossTarget.id);
+            if (attempt) {
+              const descendants = attempt.entityIds.slice(1).map(id => targets.find(t => t.id === id)).filter(Boolean);
+              partnerTarget = descendants[descendants.length - 1] || null;
+              bossEndTime = Number(partnerTarget?.endTime || bossTarget.endTime) || Infinity;
             }
+            const nextAttempt = findGlennAttempts(fightSummary.targets || {})
+              .filter(a => a.startUnixSeconds > bossStartTime).sort((a,b) => a.startUnixSeconds-b.startUnixSeconds)[0];
+            if (nextAttempt) bossEndTime = Math.min(bossEndTime, nextAttempt.startUnixSeconds - 0.001);
+          } else if (bossDef.bossRaceId === 7600) {
+            const attempt = findGate1Attempts(fightSummary.targets || {})
+              .find(a => a.firstEntityId === bossTarget.id);
+            if (attempt?.replacementEntityId) {
+              partnerTarget = targets.find(t => t.id === attempt.replacementEntityId);
+              bossEndTime = Number(partnerTarget?.endTime) || Infinity;
+            } else bossEndTime = Number(bossTarget.endTime) || Infinity;
+            const nextAttempt = findGate1Attempts(fightSummary.targets || {})
+              .filter(a => a.startUnixSeconds > bossStartTime).sort((a,b)=>a.startUnixSeconds-b.startUnixSeconds)[0];
+            if (nextAttempt) bossEndTime = Math.min(bossEndTime, nextAttempt.startUnixSeconds - 0.001);
+          } else if (bossDef.partnerRaceId) {
+            partnerTarget = targets.find(t => t.raceId === bossDef.partnerRaceId && (t.startTime || 0) >= bossStartTime);
+            if (partnerTarget) bossEndTime = (partnerTarget.seenDead || partnerTarget.disappeared) ? (partnerTarget.endTime || 0) : Infinity;
           }
 
           // Find all targets that appeared during the boss's lifetime
@@ -711,14 +741,83 @@ export default defineComponent({
             const tStartTime = t.startTime || 0;
             return tStartTime >= bossStartTime && (bossEndTime === Infinity || tStartTime <= bossEndTime);
           });
+          // Explicitly retain the matched replacement even if its spawn time is
+          // quantized slightly outside the parent lifetime boundary.
+          if (partnerTarget && !members.some(m => m.id === partnerTarget.id)) members.push(partnerTarget);
 
+          // New Succubus Queen means a distinct attempt, not the same boss run.
+          // Keep only the Queen and her four simultaneously appearing named adds.
+          if ([195012, 193359, 193364].includes(bossDef.bossRaceId)) {
+            const nextQueen = bossDef.bossRaceId === 195012 ? targets
+              .filter(t => t.raceId === 195012 && Number(t.startTime) > bossStartTime)
+              .sort((a,b)=>Number(a.startTime)-Number(b.startTime))[0] : null;
+            const siblingIds = new Set([195019,195020,195021,195022]);
+            for (let i=members.length-1;i>=0;i--) {
+              const m=members[i];
+              const withQueen = bossDef.bossRaceId === 195012 && siblingIds.has(Number(m.raceId)) &&
+                Math.abs(Number(m.startTime)-bossStartTime) <= 3 &&
+                (!nextQueen || Number(m.startTime)<Number(nextQueen.startTime));
+              if (m.id !== bossTarget.id && !withQueen) members.splice(i,1);
+            }
+          }
           if (members.length > 0) {
-            const groupTotalDamage = members.reduce((sum, m) => sum + m.damage, 0);
+            const glennBossIds = bossDef.bossRaceId === 7585 ? findGlennAttempts(fightSummary.targets || {}).find(a => a.firstEntityId === bossTarget.id)?.entityIds || [bossTarget.id] : [];
+            const independentBoss = [195012,193359,193364].includes(bossDef.bossRaceId);
+            const groupBossMembers = bossDef.bossRaceId === 7585 ? members.filter(m=>glennBossIds.includes(m.id)) : bossDef.bossRaceId===7600 ? members.filter(m=>m.id===bossTarget.id || m.id===partnerTarget?.id) : independentBoss ? members.filter(m=>m.id===bossTarget.id) : members;
+            const groupTotalDamage = groupBossMembers.reduce((sum, m) => sum + m.damage, 0);
             const groupDamagePercent = grandTotalDamage > 0 ? (groupTotalDamage / grandTotalDamage) * 100 : 0;
 
             // Determine active HP details (use partner's HP if active, else boss's HP)
-            const activeBoss = (partnerTarget && !partnerTarget.seenDead && !partnerTarget.disappeared) ? partnerTarget : bossTarget;
+            const activeBoss = partnerTarget || bossTarget;
+            const hpOf = (target: any) => {
+              const history = (target?.hpHistory || []).filter((h: any) => Number(h.maxHp) > 0);
+              const sample = history[history.length - 1];
+              return {max: Number(sample?.maxHp || target?.maxHp || 0), current: Number(sample?.currentHp ?? target?.currentHp ?? 0)};
+            };
+            const firstHp = hpOf(bossTarget);
+            const secondHp = partnerTarget ? hpOf(partnerTarget) : null;
+            const effective = bossDef.bossRaceId === 7600 && secondHp
+              ? gate1EffectiveHp(firstHp.max, firstHp.current, secondHp.max, secondHp.current, true)
+              : bossDef.bossRaceId === 7585 && glennBossIds.length === 3
+              ? (() => {
+                  // Nominal damageable pools: 7585 100-10%, 7586 100-60%,
+                  // and 7587 60-0%. Use settled HP samples, never mutate raw entities.
+                  const [a,b,c] = glennBossIds.map(id => hpOf(targets.find(t => t.id === id)));
+                  if (!a.max || !b.max || !c.max) return null;
+                  const maxHp = a.max*.9 + b.max*.4 + c.max*.6;
+                  // Determine active phase using the recorded succession, not
+                  // other targets' damage or the display sorting order.
+                  const finalTarget = targets.find(t => t.id === glennBossIds[2]);
+                  const secondTarget = targets.find(t => t.id === glennBossIds[1]);
+                  const finalStarted = Boolean(finalTarget && Number(finalTarget.startTime)>0 &&
+                    (finalTarget.seenAppear || finalTarget.seenDead || finalTarget.disappeared));
+                  const secondStarted = Boolean(secondTarget && Number(secondTarget.startTime)>0 &&
+                    (secondTarget.seenAppear || secondTarget.seenDead || secondTarget.disappeared));
+                  const currentHp = finalStarted ? Math.max(0,Math.min(c.current,c.max*.6)) :
+                    secondStarted ? Math.max(0,b.current-b.max*.6)+c.max*.6 :
+                    Math.max(0,a.current-a.max*.1)+b.max*.4+c.max*.6;
+                  return {maxHp,currentHp,hpPercent:maxHp>0?100*currentHp/maxHp:0};
+                })() : null;
 
+            const groupPhases = findMechanicGroups(fightSummary.targets || {})
+              .filter(w => w.bossEntityIds.includes(bossTarget.id));
+            const phaseMemberIds = new Set(groupPhases.flatMap(w => w.memberEntityIds));
+            const phaseSections = groupPhases.map(w => {
+              const phaseMembers = members.filter(m => w.memberEntityIds.includes(m.id));
+              return {
+                id: `${bossTarget.id}_${w.type}_${w.phaseHpPercent}`,
+                label: w.label,
+                damage: phaseMembers.reduce((sum, m) => sum + m.damage, 0),
+                targets: phaseMembers,
+                expectedMembers: w.expectedMembers,
+                evidence: w.evidence,
+              };
+            }).filter(section => section.targets.length);
+            // The boss belongs at the very top, then real phase sections,
+            // then compact miscellaneous mobs that can be expanded separately.
+            const bossMembers = members.filter(m => bossDef.bossRaceId === 7585 ? glennBossIds.includes(m.id) : m.id === bossTarget.id || m.id === partnerTarget?.id);
+            const miscellaneous = members.filter(m => !phaseMemberIds.has(m.id) &&
+              !bossMembers.some(b => b.id === m.id));
             const groupItem = {
               id: `group_${bossTarget.id}`,
               name: bossDef.groupName,
@@ -726,9 +825,9 @@ export default defineComponent({
               isGroup: true,
               damage: groupTotalDamage,
               damagePercent: groupDamagePercent,
-              currentHp: activeBoss.currentHp,
-              maxHp: activeBoss.maxHp,
-              hpPercent: activeBoss.hpPercent,
+              currentHp: effective?.currentHp ?? activeBoss.currentHp,
+              maxHp: effective?.maxHp ?? activeBoss.maxHp,
+              hpPercent: effective?.hpPercent ?? activeBoss.hpPercent,
               seenAppear: activeBoss.seenAppear,
               seenDead: activeBoss.seenDead,
               disappeared: activeBoss.disappeared,
@@ -736,14 +835,11 @@ export default defineComponent({
               endTime: partnerTarget ? partnerTarget.endTime : bossTarget.endTime,
               raceId: activeBoss.raceId,
               hasHpUpdates: activeBoss.hasHpUpdates,
-              targets: [...members].sort((a, b) => {
-                const startA = a.startTime || 0;
-                const startB = b.startTime || 0;
-                if (startA !== startB) {
-                  return startA - startB; // Chronological ascending order
-                }
-                return b.damage - a.damage; // Tie-breaker: highest damage first
-              }),
+              targets: members,
+              bossMembers,
+              isGate1BossGroup: bossDef.bossRaceId === 7600,
+              phaseSections,
+              miscellaneous,
             };
 
             groupedList.push(groupItem);
@@ -758,6 +854,8 @@ export default defineComponent({
       const combined = [...ungroupedTargets, ...groupedList];
 
       combined.sort((a, b) => {
+        // Keep the encounter HP accessible without scrolling through adds.
+        if (a.isGroup !== b.isGroup) return a.isGroup ? -1 : 1;
         const startA = a.startTime || 0;
         const startB = b.startTime || 0;
         if (startB !== startA) {
@@ -921,6 +1019,7 @@ export default defineComponent({
     });
 
     watch(activeSessionId, () => {
+      openPhaseSections.value = [];
       expandedGroup.value = null;
       isTargetMenuOpen.value = false;
     });
@@ -964,6 +1063,8 @@ export default defineComponent({
       formatTime,
       isTargetMenuOpen,
       expandedGroup,
+      openPhaseSections,
+      togglePhaseSection,
       selectedTargetName,
       selectedTargetSeenAppear,
       selectedTargetDamage,

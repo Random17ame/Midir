@@ -309,14 +309,10 @@ func (t *eventPublisher) loop() {
 			t.sm.mu.RLock()
 			if t.sm.currentSession != nil {
 				eventsCount = len(t.sm.currentSession.events)
-				for _, e := range t.sm.currentSession.events {
-					id := e.GetEventId()
-					name := getEventName(id)
-					eventBreakdown[name]++
-
-					if bytes, err := json.Marshal(e); err == nil {
-						eventsBytes += len(bytes)
-					}
+				// Updated incrementally at append time; do not remarshal every event each second.
+				eventsBytes = t.sm.currentSession.eventBytes
+				for k, v := range t.sm.currentSession.eventTypes {
+					eventBreakdown[k] = v
 				}
 			}
 			t.sm.mu.RUnlock()
@@ -490,17 +486,6 @@ func (t *eventPublisher) logPacketAsEvent(p *packet.GamePacket) {
 		// packet variants. Try the specific healing structure first; ordinary
 		// effect packets fall through to the existing parser below.
 		if heal, parseErr := packet.ParseHealingPacket(p); parseErr == nil {
-			// Diagnostic-only packet metadata. Do not assume a recent caster is correct.
-			healingDetails := map[string]interface{}{
-				"subtype": heal.Type, "entity_id": heal.EntityID, "raw_amount": heal.Amount,
-				"last_caster_candidate": t.lastHealingCasterID,
-			}
-			if heal.Type == 0x0A && heal.Amount > 0 {
-				for k, v := range healingDiagnostics.candidatesForHeal(p.At, heal.EntityID, heal.Amount) {
-					healingDetails[k] = v
-				}
-			}
-			healingDiagnostics.write(p.At, "healing_packet", healingDetails)
 			switch heal.Type {
 			case 0x19, 0x28:
 				t.lastHealingCasterID = heal.EntityID
@@ -758,15 +743,6 @@ func (t *eventPublisher) logPacketAsEvent(p *packet.GamePacket) {
 			}
 		}
 
-		// Capture candidate skill activity regardless of whether it dealt damage.
-		// Skill ID is a uint16 in this opcode and the target may be absent.
-		skillID := p.Msg[0].Data().(uint16)
-		if isHealingCandidateSkill(skillID) {
-			healingDiagnostics.noteSkill(p.At, p.Id, targetID, skillID)
-			healingDiagnostics.write(p.At, "healing_skill_activation", map[string]interface{}{
-				"caster_id": p.Id, "target_id": targetID, "skill_id": skillID, "opcode": p.Op,
-			})
-		}
 		t.lastCombatAt[p.Id] = p.At
 		if targetID != 0 {
 			t.lastCombatAt[targetID] = p.At
@@ -781,16 +757,6 @@ func (t *eventPublisher) logPacketAsEvent(p *packet.GamePacket) {
 
 		// Retrieve active HP in a thread-safe way from the aggregator
 		curHP, baseHP, additionalHP, maxHP, exists := t.aggregator.GetEntityHP(statPack.EntityId)
-		if exists {
-			// Diagnostic recorder is not throttled by the normal HP timeline logger.
-			entityType := "unknown"
-			if _, player := playerCache.Get(statPack.EntityId); player {
-				entityType = "player"
-			} else if t.aggregator.IsCombatTarget(statPack.EntityId) {
-				entityType = "enemy"
-			}
-			healingDiagnostics.observeHP(p.At, statPack.EntityId, curHP, baseHP, additionalHP, entityType)
-		}
 		if !exists {
 			// Skip logging if the entity is not currently tracked in the active entityCache
 			break
@@ -879,7 +845,11 @@ func (t *eventPublisher) logPacketAsEvent(p *packet.GamePacket) {
 		logger.Printf("Packet parsing error for logging (Op: 0x%X): %v", p.Op, err)
 	}
 
-	// CHANGED: Send to channel instead of writing directly
+	// Bound the saved event log to active combat targets. Decide at packet time,
+	// not when the asynchronous logger drains its queue after the boss dies.
+	if !t.aggregator.CombatRecordingActive() {
+		return
+	}
 	for _, e := range events {
 		select {
 		case t.logCh <- e:
