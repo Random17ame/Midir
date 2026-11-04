@@ -25,7 +25,7 @@ func TestOvershieldMultiSaintRecentAndAmbiguous(t *testing.T) {
 	addTestSaint(a, 101)
 	addTestSaint(a, 202)
 	a.recentShieldCasts[101] = healingCasterHint{CasterID: 101, SkillID: 59001, At: 99}
-	a.recentShieldCasts[202] = healingCasterHint{CasterID: 202, SkillID: 59002, At: 100}
+	a.recentShieldCasts[202] = healingCasterHint{CasterID: 202, SkillID: 59003, At: 100}
 	if got := a.overshieldCasterForTarget(999, 100); got != 202 {
 		t.Fatalf("most recent cast: got %d, want 202", got)
 	}
@@ -36,6 +36,18 @@ func TestOvershieldMultiSaintRecentAndAmbiguous(t *testing.T) {
 	a.lastHealingCaster[999] = healingCasterHint{CasterID: 101, SkillID: 59001, At: 100}
 	if got := a.overshieldCasterForTarget(999, 100); got != 101 {
 		t.Fatalf("target-specific hint: got %d, want 101", got)
+	}
+}
+
+// Skill 59002 is a Harmonic Saint healing ability but is not verified as
+// an overshield source; it must not enter the overshield attribution window.
+func TestOvershieldRejectsHealingOnlyCast(t *testing.T) {
+	a := NewAggregator()
+	addTestSaint(a, 101)
+	addTestSaint(a, 202)
+	a.recentShieldCasts[101] = healingCasterHint{CasterID: 101, SkillID: 59002, At: 100}
+	if got := a.overshieldCasterForTarget(999, 100); got != 0 {
+		t.Fatalf("non-overshield healing skill must not assign a caster, got %d", got)
 	}
 }
 

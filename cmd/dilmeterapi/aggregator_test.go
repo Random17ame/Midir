@@ -47,15 +47,15 @@ func TestAggregator_SoftClear(t *testing.T) {
 		t.Errorf("Expected playerStats to be empty, got %d", len(agg.playerStats))
 	}
 
-	// Identity should be preserved
+	// Active entity identity should be preserved, but Arcana is session-scoped.
 	if _, ok := agg.entityCache[playerID]; !ok {
 		t.Errorf("Expected entityCache to preserve playerID")
 	}
 	if !agg.seenAppear[playerID] {
 		t.Errorf("Expected seenAppear to preserve/re-populate playerID after soft clear")
 	}
-	if _, ok := agg.playerTalentNames[playerID]; !ok {
-		t.Errorf("Expected playerTalentNames to preserve playerID")
+	if _, ok := agg.playerTalentNames[playerID]; ok {
+		t.Errorf("Expected playerTalentNames to reset on soft clear for new-session Arcana detection")
 	}
 	if _, ok := agg.playerSeenAppear[playerID]; !ok {
 		t.Errorf("Expected playerSeenAppear to preserve playerID")

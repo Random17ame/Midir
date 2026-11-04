@@ -4,6 +4,8 @@ A concise record of **what changed and why**. Features are grouped by purpose ra
 
 ## Build and dependency maintenance
 
+- **CI Go regression fixtures:** Align soft-clear tests with session-scoped Arcana reset, and validate multi-Saint overshield attribution using allowlisted casts while explicitly rejecting ordinary healing-only skills. No production attribution behavior changed. [^23]
+
 - **Capture-mode safety:** CLI capture now honors the saved Npcap promiscuous-mode opt-in instead of forcing it on; absent preferences default off, and offline playback stays non-promiscuous. UI capture, restart, and autodetection retain their existing setting propagation. Added startup regression coverage. [^22]
 
 - **Frontend dependency maintenance:** Raise Vue and Vite to patched compatible release ranges; require patched transitive dependency families identified by the npm audit, and approve only the reviewed `esbuild` installation script version. Build scripts synchronize the frontend lockfile during installation. Replace two ineffective dynamic imports with static imports, keeping loading state and condition-combination behavior unchanged. [^21]
@@ -90,3 +92,5 @@ References identify relevant files in the Midir source, not specific commits. Th
 [^21]: Frontend build configuration: [`front/package.json`](front/package.json), [`front/src/apicall.ts`](front/src/apicall.ts), [`front/src/App.vue`](front/src/App.vue), [`build.bat`](build.bat), and [`build.sh`](build.sh).
 
 [^22]: Npcap capture-mode preference: [`cmd/dilmeterapi/main.go`](cmd/dilmeterapi/main.go), [`cmd/dilmeterapi/api_setup.go`](cmd/dilmeterapi/api_setup.go), [`cmd/dilmeterapi/capture_promiscuous_test.go`](cmd/dilmeterapi/capture_promiscuous_test.go), and [`packet/gamePacketReader.go`](packet/gamePacketReader.go).
+
+[^23]: Go test expectations: [`aggregator_test.go`](cmd/dilmeterapi/aggregator_test.go), [`overshield_attribution_test.go`](cmd/dilmeterapi/overshield_attribution_test.go); implementation in [`aggregator.go`](cmd/dilmeterapi/aggregator.go).
