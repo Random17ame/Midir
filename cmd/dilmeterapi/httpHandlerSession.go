@@ -62,7 +62,8 @@ func handleSaveSession(sm *SessionManager) http.HandlerFunc {
 		if req.Name == "" {
 			req.Name = "Saved Session"
 		}
-		if err := sm.SaveLiveSession(req.Name); err != nil {
+		saved, err := sm.SaveLiveSessionResult(req.Name)
+		if err != nil {
 			respondWithError(w, http.StatusInternalServerError, "Failed to save session: "+err.Error())
 			return
 		}
@@ -79,7 +80,7 @@ func handleSaveSession(sm *SessionManager) http.HandlerFunc {
 			globalPub.aggregator.mu.RUnlock()
 			sm.WriteEntityAppearEvents(activeEntities)
 		}
-		w.WriteHeader(http.StatusCreated)
+		respondWithJSON(w, http.StatusCreated, saved)
 	}
 }
 
@@ -190,12 +191,17 @@ func GenerateSummaryFromFile(logPath string) (*FightSummary, error) {
 	// is the durable snapshot of aggregate-only data such as overshield totals.
 	entitiesInLog := make(map[string]eventEntityAppear)
 	var savedSessionSummary *SessionSummaryData
+	identity := newLegacyRecordingIdentity()
 	scanner := bufio.NewScanner(file)
 	scanner.Buffer(make([]byte, 64*1024), 32*1024*1024) // Session summaries can exceed the default 64 KiB scanner limit.
 	for scanner.Scan() {
 		var event eventBase
 		if err := json.Unmarshal(scanner.Bytes(), &event); err != nil {
+			identity.addLine(scanner.Bytes())
 			continue
+		}
+		if event.EventId != eventIdSessionSummary {
+			identity.addLine(scanner.Bytes())
 		}
 		switch event.EventId {
 		case eventIdEntityAppear:
@@ -215,8 +221,14 @@ func GenerateSummaryFromFile(logPath string) (*FightSummary, error) {
 		}
 	}
 
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("could not read complete session: %w", err)
+	}
+
 	// Reset file reader to the beginning for the next pass.
-	file.Seek(0, 0)
+	if _, err := file.Seek(0, 0); err != nil {
+		return nil, err
+	}
 	scanner = bufio.NewScanner(file)
 	scanner.Buffer(make([]byte, 64*1024), 32*1024*1024) // Session summaries can exceed the default 64 KiB scanner limit.
 
@@ -273,7 +285,7 @@ func GenerateSummaryFromFile(logPath string) (*FightSummary, error) {
 			var damageEvent eventDamage
 			if err := json.Unmarshal(line, &damageEvent); err == nil {
 				// Zero-out damage if the target has active invincibility conditions (494 or 277)
-				if active, exists := activeConditions[damageEvent.TargetId]; exists {
+				if active, exists := activeConditions[damageEvent.TargetId]; exists && damageEvent.Damage >= 0 {
 					if _, has494 := active[494]; has494 {
 						damageEvent.Damage = 0
 						damageEvent.ManaDamage = 0
@@ -298,7 +310,13 @@ func GenerateSummaryFromFile(logPath string) (*FightSummary, error) {
 							if isMarionette {
 								damageEvent.Id = entity.OwnerId
 							} else {
-								// Pet
+								// Pet: preserve source identity before owner attribution.
+								if entity.RaceId != 0 {
+									name := getRaceName(entity.RaceId)
+									if !strings.HasPrefix(name, "Unknown Race (") {
+										damageEvent.PetRaceID, damageEvent.PetName = entity.RaceId, name
+									}
+								}
 								damageEvent.Id = entity.OwnerId
 								damageEvent.SkillId = 9999
 							}
@@ -410,6 +428,10 @@ func GenerateSummaryFromFile(logPath string) (*FightSummary, error) {
 		}
 	}
 
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("could not read complete session: %w", err)
+	}
+
 	// STEP 1: Process the collected events to generate the main summary tables.
 	playerStats, damageTaken, talents, talentNames, talentColors, targets, startTime, endTime, targetTimestamps := processEventsForSummary(allDamageEvents, entitiesInLog)
 
@@ -430,11 +452,12 @@ func GenerateSummaryFromFile(logPath string) (*FightSummary, error) {
 
 	// STEP 2: Generate graph data
 	graphDataByTarget := make(map[string]map[string][]GraphDataPoint)
-	if len(allDamageEvents) > 0 {
-		graphDataByTarget[""] = generateGraphDataFromEvents(allDamageEvents, startTime, endTime)
+	damageTimeline := damageOnlyTimeline(allDamageEvents)
+	if len(damageTimeline) > 0 {
+		graphDataByTarget[""] = generateGraphDataFromEvents(damageTimeline, startTime, endTime)
 		for targetId := range targets {
 			var targetDamageEvents []eventDamage
-			for _, de := range allDamageEvents {
+			for _, de := range damageTimeline {
 				if de.TargetId == targetId {
 					targetDamageEvents = append(targetDamageEvents, de)
 				}
@@ -489,6 +512,11 @@ func GenerateSummaryFromFile(logPath string) (*FightSummary, error) {
 		}
 	}
 	applySavedSupportAndSkillData(&summary, savedSessionSummary)
+	if savedSessionSummary != nil && validRecordingID(savedSessionSummary.RecordingID) {
+		summary.RecordingID = savedSessionSummary.RecordingID
+	} else {
+		summary.RecordingID = identity.id()
+	}
 
 	return &summary, nil
 }
@@ -500,6 +528,7 @@ func applySavedSupportAndSkillData(summary *FightSummary, saved *SessionSummaryD
 	if summary == nil || saved == nil {
 		return
 	}
+	summary.HealingIncomplete = saved.HealingIncomplete
 	for _, stored := range saved.Players {
 		currentID := stored.ID
 		if currentID == "" {
@@ -553,6 +582,7 @@ func attachSkillGroupsFromDamageEvents(summary *FightSummary, events []eventDama
 	type skillGroupKey struct {
 		timestamp int64
 		skillID   uint16
+		petRaceID uint32
 	}
 	groupsByPlayer := make(map[string]map[int64]*SkillGroupEvent)
 	skillsByGroup := make(map[string]map[skillGroupKey]int)
@@ -578,6 +608,7 @@ func attachSkillGroupsFromDamageEvents(summary *FightSummary, events []eventDama
 			player.DamageEvents = append(player.DamageEvents, PreciseDamageEvent{
 				AtMs: atMs, SkillID: event.SkillId, TargetID: event.TargetId,
 				Damage: event.Damage, Critical: event.IsCritical, Delayed: event.IsDelayed,
+				PetRaceID: event.PetRaceID, PetName: event.PetName,
 			})
 			summary.Players[event.Id] = player
 		}
@@ -588,22 +619,22 @@ func attachSkillGroupsFromDamageEvents(summary *FightSummary, events []eventDama
 		}
 		damage := uint64(event.Damage)
 		group.TotalDmg += damage
-		key := skillGroupKey{timestamp: timestamp, skillID: event.SkillId}
+		key := skillGroupKey{timestamp: timestamp, skillID: event.SkillId, petRaceID: event.PetRaceID}
 		index, exists := skillsByGroup[event.Id][key]
 		if !exists {
-			group.Skills = append(group.Skills, SkillHitMeta{SkillID: event.SkillId})
+			group.Skills = append(group.Skills, SkillHitMeta{SkillID: event.SkillId, PetRaceID: event.PetRaceID, PetName: event.PetName})
 			index = len(group.Skills) - 1
 			skillsByGroup[event.Id][key] = index
 		}
 		targetIndex := -1
 		for i := range group.Targets {
-			if group.Targets[i].TargetID == event.TargetId && group.Targets[i].SkillID == event.SkillId {
+			if group.Targets[i].TargetID == event.TargetId && group.Targets[i].SkillID == event.SkillId && group.Targets[i].PetRaceID == event.PetRaceID {
 				targetIndex = i
 				break
 			}
 		}
 		if targetIndex < 0 {
-			group.Targets = append(group.Targets, TargetHitMeta{TargetID: event.TargetId, SkillID: event.SkillId})
+			group.Targets = append(group.Targets, TargetHitMeta{TargetID: event.TargetId, SkillID: event.SkillId, PetRaceID: event.PetRaceID, PetName: event.PetName})
 			targetIndex = len(group.Targets) - 1
 		}
 		targetHit := &group.Targets[targetIndex]
@@ -670,9 +701,9 @@ func processEventsForSummary(allDamageEvents []eventDamage, entitiesInLog map[st
 		return
 	}
 
-	// The first and last events in the log determine the overall encounter time.
-	encounterStartTime = allDamageEvents[0].At
-	encounterEndTime = allDamageEvents[len(allDamageEvents)-1].At
+	// Healing is represented by negative damage. It is not an offensive
+	// observation and must never extend the damage clock or reduce DPS.
+	encounterStartTime, encounterEndTime = damageTimelineBounds(allDamageEvents)
 
 	// Request-scoped cache for player lookups
 	playerLookup := make(map[uint64]*PlayerInfo)
@@ -859,6 +890,9 @@ func generateGraphDataFromEvents(allDamageEvents []eventDamage, startTime, endTi
 	// Create a map for quick access to each player's damage events
 	playerEvents := make(map[string][]eventDamage)
 	for _, de := range allDamageEvents {
+		if de.Damage < 0 {
+			continue
+		}
 		if _, isPlayer := getPlayer(parseUint64(de.Id)); isPlayer {
 			playerEvents[de.Id] = append(playerEvents[de.Id], de)
 		}

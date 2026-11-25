@@ -79,6 +79,8 @@ type eventSkillUse struct {
 }
 
 type eventDamage struct {
+	PetRaceID uint32 `json:"petRaceId,omitempty"`
+	PetName   string `json:"petName,omitempty"`
 	eventBase
 	AtMs       int64 `json:"AtMs,omitempty"` // preserve precise hit timing for later use/damage correlation
 	TargetId   string

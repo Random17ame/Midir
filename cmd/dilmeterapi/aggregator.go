@@ -5,6 +5,7 @@ import (
 	"sort"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"strings"
@@ -29,6 +30,9 @@ type Aggregator struct {
 	}
 	encounterStartTime int64
 	encounterEndTime   int64
+	// UI-only wall-clock activity; never used for recorded encounter bounds.
+	lastCombatActivity time.Time
+	minimalistMode     atomic.Bool
 	// General Entity Info
 	entityCache   map[uint64]*packet.EntityInfo
 	targetNames   map[uint64]string // Cache for entity names to persist after they disappear
@@ -258,6 +262,7 @@ func (a *Aggregator) updateTimestamps(targetId uint64, eventTime time.Time) {
 		a.encounterStartTime = eventUnix
 	}
 	a.encounterEndTime = eventUnix
+	a.lastCombatActivity = time.Now()
 
 	// Update per-target timestamps
 	timestamps := a.targetTimestamps[targetId]
@@ -310,6 +315,25 @@ func (a *Aggregator) resolveAttacker(attackerId uint64) uint64 {
 		}
 	}
 	return attackerId
+}
+
+// petAttribution identifies a pet from its original attacker entity. This is
+// presentation evidence only; it never changes damage ownership or skill 9999.
+func petAttribution(entity *packet.EntityInfo) (uint32, string) {
+	if entity == nil || entity.OwnerId == 0 || entity.RaceId == 0 {
+		return 0, ""
+	}
+	if entity.EntityType == 5 || entity.EntityType == 11 || entity.EntityType == 12 {
+		return 0, ""
+	}
+	if _, err := strconv.Atoi(entity.Name); err == nil {
+		return 0, ""
+	}
+	name := getRaceName(entity.RaceId)
+	if strings.HasPrefix(name, "Unknown Race (") || name == "" {
+		return 0, ""
+	}
+	return entity.RaceId, name
 }
 
 // resolveAttackerAndSkill resolves the attacker ID (mapping puppets and pets back to their player owners).
@@ -427,12 +451,14 @@ func (a *Aggregator) ProcessPacket(p *packet.GamePacket) {
 		return
 	}
 
-	if p.Op == opcodeHealing {
+	if p.Op == opcodeHealing && !a.minimalistMode.Load() {
 		a.processDedicatedHealingPacket(p)
 	}
 	if p.Op == opcodeCombatAction {
 		a.processCombatAction(p)
-		a.processOvershieldCasterHint(p)
+		if !a.minimalistMode.Load() {
+			a.processOvershieldCasterHint(p)
+		}
 	}
 	if p.Op == opcodeEffect {
 		a.processEffect(p)
@@ -779,7 +805,7 @@ func (a *Aggregator) processCharacterCondition(p *packet.CharacterConditionPacke
 	// appears to represent shield capacity. Both are derived from condition
 	// metadata, never HP stat 31. The shield counter is an *observed positive
 	// capacity delta*; refresh/stack semantics still need validation.
-	if p.CCId == 999 {
+	if p.CCId == 999 && !a.minimalistMode.Load() {
 		a.observeVeilOfLife(p, at)
 	}
 
@@ -856,6 +882,8 @@ func (a *Aggregator) processCombatAction(p *packet.GamePacket) {
 		return
 	}
 
+	// Capture the original actor before attributing pet damage to its owner.
+	petRaceID, petName := petAttribution(a.entityCache[attackerId])
 	attackerId, attackSkillId = a.resolveAttackerAndSkill(attackerId, attackSkillId)
 
 	// Check if we have identified the talent color yet. If not, try to identify it.
@@ -915,9 +943,10 @@ func (a *Aggregator) processCombatAction(p *packet.GamePacket) {
 				pStats := a.getOrCreatePlayerStats(playerInfo)
 				pStats.DamageEvents = append(pStats.DamageEvents, PreciseDamageEvent{
 					AtMs: p.At.UnixMilli(), SkillID: attackSkillId,
-					TargetID: strconv.FormatUint(sub.EntityId, 10),
-					Damage:   sub.Hit.Damage,
-					Critical: (sub.Hit.Options & packet.CombatActionHitOptionsCritical) != 0,
+					TargetID:  strconv.FormatUint(sub.EntityId, 10),
+					Damage:    sub.Hit.Damage,
+					Critical:  (sub.Hit.Options & packet.CombatActionHitOptionsCritical) != 0,
+					PetRaceID: petRaceID, PetName: petName,
 				})
 
 				// 1. Locate or append the bucket for the current flight second
@@ -949,7 +978,7 @@ func (a *Aggregator) processCombatAction(p *packet.GamePacket) {
 				foundTarget := false
 				for i := range targetGroup.Targets {
 					hit := &targetGroup.Targets[i]
-					if hit.TargetID == targetID && hit.SkillID == attackSkillId {
+					if hit.TargetID == targetID && hit.SkillID == attackSkillId && hit.PetRaceID == petRaceID {
 						hit.HitCount++
 						hit.Damage += packetDmgVal
 						if packetDmgVal > hit.MaxDamage {
@@ -969,6 +998,7 @@ func (a *Aggregator) processCombatAction(p *packet.GamePacket) {
 					}
 					targetGroup.Targets = append(targetGroup.Targets, TargetHitMeta{
 						TargetID: targetID, SkillID: attackSkillId, HitCount: 1,
+						PetRaceID: petRaceID, PetName: petName,
 						Damage: packetDmgVal, MaxDamage: packetDmgVal, CritCount: crits,
 					})
 				}
@@ -976,7 +1006,7 @@ func (a *Aggregator) processCombatAction(p *packet.GamePacket) {
 				foundSubSkill := false
 
 				for i := range targetGroup.Skills {
-					if targetGroup.Skills[i].SkillID == attackSkillId {
+					if targetGroup.Skills[i].SkillID == attackSkillId && targetGroup.Skills[i].PetRaceID == petRaceID {
 						targetGroup.Skills[i].HitCount++
 						targetGroup.Skills[i].Damage += packetDmgVal
 						if packetDmgVal > targetGroup.Skills[i].MaxDamage {
@@ -998,6 +1028,7 @@ func (a *Aggregator) processCombatAction(p *packet.GamePacket) {
 					}
 					targetGroup.Skills = append(targetGroup.Skills, SkillHitMeta{
 						SkillID:   attackSkillId,
+						PetRaceID: petRaceID, PetName: petName,
 						HitCount:  1,
 						Damage:    packetDmgVal,
 						MaxDamage: packetDmgVal,
@@ -1389,6 +1420,16 @@ func (a *Aggregator) updateDamageTaken(target *PlayerInfo, attackerID uint64, sk
 
 // GetSummary now uses the shared timestamps to calculate all DPS values.
 func (a *Aggregator) GetSummary() FightSummary {
+	return a.getSummary(false, false)
+}
+
+// Only the periodic live view may contain a reduced presentation payload.
+// Save and historical reconstruction never call this path.
+func (a *Aggregator) GetLiveSummary(compact bool) FightSummary {
+	return a.getSummary(true, compact)
+}
+
+func (a *Aggregator) getSummary(liveView, compact bool) FightSummary {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 
@@ -1396,6 +1437,12 @@ func (a *Aggregator) GetSummary() FightSummary {
 		Players:     make(map[string]PlayerStats),
 		Targets:     make(map[string]TargetStats),
 		DamageTaken: make(map[string]PlayerDamageTakenStats),
+	}
+
+	if liveView {
+		summary.MinimalistMode = a.minimalistMode.Load()
+		summary.LiveChartPaused = summary.MinimalistMode && shouldPauseLiveChart(a.lastCombatActivity, time.Now(), a.liveChartTargetActiveLocked())
+		summary.LiveCompact = compact && summary.LiveChartPaused
 	}
 
 	// Set overall duration from the shared encounter timers
@@ -1426,6 +1473,13 @@ func (a *Aggregator) GetSummary() FightSummary {
 			VeilPeak:            pStats.VeilPeak,
 			VeilDMR:             pStats.VeilDMR,
 			VeilPeakDMR:         pStats.VeilPeakDMR,
+		}
+
+		if summary.LiveCompact {
+			// Preserve chronological live Arcana identity while avoiding repeated
+			// serialization of every exact hit. Full histories stay in the aggregator
+			// and NDJSON. Skill groups and activations are still needed by the live meter.
+			playerCopy.DamageEvents = compactLiveHitEvidence(pStats.DamageEvents)
 		}
 
 		// Finalize overall stats using the single overall encounter duration
@@ -1847,6 +1901,7 @@ func (a *Aggregator) Clear() {
 	})
 	a.encounterStartTime = 0
 	a.encounterEndTime = 0
+	a.lastCombatActivity = time.Time{}
 	a.deadEntities = make(map[uint64]bool)
 	a.seenDead = make(map[uint64]bool)
 	a.seenAppear = make(map[uint64]bool)
@@ -1904,6 +1959,25 @@ func (a *Aggregator) IsPlayerSafe(entityID uint64) bool {
 func (a *Aggregator) CombatRecordingActive() bool {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
+	return a.combatRecordingActiveLocked()
+}
+
+// Only used by the live rendering heuristic. Do not change the event logger's
+// existing combat gate or recognized dungeon boundaries.
+func (a *Aggregator) liveChartTargetActiveLocked() bool {
+	for id := range a.targetTimestamps {
+		if a.deadEntities[id] || a.disappeared[id] {
+			continue
+		}
+		intervals := a.targetPresenceIntervals[id]
+		if len(intervals) != 0 && intervals[len(intervals)-1].End == 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func (a *Aggregator) combatRecordingActiveLocked() bool {
 	for id, intervals := range a.targetPresenceIntervals {
 		if a.deadEntities[id] {
 			continue

@@ -41,7 +41,7 @@
         <div class="tooltip-damage font-weight-bold mb-2">💥 {{ tooltip.isEnemy ? 'Enemy outgoing damage' : 'Combined player damage' }}: {{ tooltip.totalDmg.toLocaleString() }}</div>
         <div class="tooltip-divider mb-2"></div>
         <div v-for="sk in tooltip.skills" :key="sk.skillId" class="tooltip-skill-row d-flex align-items-center justify-content-between mb-1">
-          <span class="sk-name text-truncate pr-4">{{ getSkillName(sk.skillId) }}</span>
+          <span class="sk-name text-truncate pr-4">{{ getScatterSkillName(sk) }}</span>
           <span class="sk-meta text-right font-weight-medium">
             {{ sk.damage.toLocaleString() }} <span class="text-slate">({{ sk.hitCount }}x)</span>
             <span v-if="sk.critCount > 0" class="text-red ml-1">🔥 Crit</span>
@@ -68,6 +68,7 @@ import { hiddenPlayers, toggleHiddenPlayer, globalHideMode } from "@/store";
 import { Chart as ChartJS, ScatterController, PointElement, LinearScale, Tooltip, Legend } from "chart.js";
 import zoomPlugin from "chartjs-plugin-zoom";
 import { scopeScatterGroups, hasTargetAttribution } from "@/utils/scatterTargets";
+import { PET_DAMAGE_SKILL_ID, PET_DAMAGE_SKILL_LABEL, petEventLabel } from "@/utils/petLabels";
 
 ChartJS.register(ScatterController, PointElement, LinearScale, Tooltip, Legend, zoomPlugin);
 
@@ -97,7 +98,9 @@ export default defineComponent({
       return `${mins}:${secs.toString().padStart(2, "0")}`;
     };
 
-    const getSkillName = (id: number) => skillNameMap.value?.[id]?.name || `Skill ${id}`;
+    const getSkillName = (id: number) => skillNameMap.value?.[id]?.name || (id === PET_DAMAGE_SKILL_ID ? PET_DAMAGE_SKILL_LABEL : `Skill ${id}`);
+    const getScatterSkillName = (hit: { skillId: number; petName?: string }) =>
+      hit.skillId === PET_DAMAGE_SKILL_ID ? petEventLabel(hit.petName) : getSkillName(hit.skillId);
 
     const togglePlayer = (playerId: string) => {
       toggleHiddenPlayer(playerId);
@@ -215,7 +218,7 @@ export default defineComponent({
     watch([visibleDatasets, bossOnly], () => void nextTick(syncChart));
     onBeforeUnmount(() => chartInstance?.destroy());
 
-    return { canvasRef, tooltip, formatTimeLabel, getSkillName, players: computed(() => props.players), enemies: computed(() => props.enemies), visiblePlayerIds, togglePlayer, visibleDatasets, hiddenPlayers, globalHideMode, bossOnly, showEnemies, unavailableLegacy };
+    return { canvasRef, tooltip, formatTimeLabel, getSkillName, getScatterSkillName, players: computed(() => props.players), enemies: computed(() => props.enemies), visiblePlayerIds, togglePlayer, visibleDatasets, hiddenPlayers, globalHideMode, bossOnly, showEnemies, unavailableLegacy };
   }
 });
 </script>

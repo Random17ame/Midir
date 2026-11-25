@@ -48,6 +48,8 @@ assert.equal(resolvePlayerArcana(player, summary, 'stage-5').color, '#22aa66');
 assert.equal(resolvePlayerArcana(player, summary, 'stage-2').name, 'Alchemic Sharpshooter');
 assert.equal(resolvePlayerArcana(player, summary, 'mixed-group').status, 'mixed');
 assert.equal(resolvePlayerArcanaForIds(player, ['stage5-enemy']).name, 'Sacred Guardian');
+assert.equal(resolvePlayerArcanaForIds(player, ['stage2-enemy']).name, 'Alchemic Sharpshooter');
+assert.equal(resolvePlayerArcanaForIds(player, ['stage2-enemy', 'stage5-enemy']).status, 'mixed');
 assert.equal(resolvePlayerArcanaWindow(player, 200, 220).name, 'Sacred Guardian');
 assert.equal(resolvePlayerArcanaWindow(player, 100, 110).name, 'Alchemic Sharpshooter');
 assert.equal(resolvePlayerArcanaWindow(player, 300, 320).status, 'unknown');

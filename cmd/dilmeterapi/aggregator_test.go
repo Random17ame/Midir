@@ -747,7 +747,7 @@ func TestAggregator_PetDamageAttribution(t *testing.T) {
 
 	// Add player and pet to entityCache
 	agg.entityCache[playerID] = &packet.EntityInfo{Id: playerID, Name: "Bob", RaceId: 8001}
-	agg.entityCache[petID] = &packet.EntityInfo{Id: petID, Name: "Annwnaa", RaceId: 491006, OwnerId: playerID, EntityType: 2}
+	agg.entityCache[petID] = &packet.EntityInfo{Id: petID, Name: "SamplePet", RaceId: 491006, OwnerId: playerID, EntityType: 2}
 	agg.entityCache[enemyID] = &packet.EntityInfo{Id: enemyID, Name: "99999", RaceId: 2000}
 
 	// Process Effect packet from pet (e.g. Smash, skill ID 100)
@@ -826,7 +826,7 @@ func TestProcessEventsForSummary_PetAndPuppetDamage(t *testing.T) {
 	// Mock entitiesInLog
 	entitiesInLog := map[string]eventEntityAppear{
 		petIDStr: {
-			Name:    "Annwnaa",
+			Name:    "SamplePet",
 			RaceId:  491006,
 			OwnerId: playerIDStr,
 		},

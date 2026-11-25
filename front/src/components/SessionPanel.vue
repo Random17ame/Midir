@@ -26,7 +26,7 @@
         </div>
 
         <div class="px-3 pb-2 pt-2">
-          <v-btn block size="small" color="primary" variant="tonal" prepend-icon="mdi-folder-zip" @click="openBatchExport">Batch Export HTML Reports</v-btn>
+          <v-btn block size="small" color="primary" variant="tonal" prepend-icon="mdi-folder-zip" @click="openBatchExport">Batch Export Sessions</v-btn>
         </div>
         <div class="px-3 pb-2">
           <v-btn block size="small" variant="tonal" prepend-icon="mdi-delete-sweep" @click="openBatchDelete">Batch Delete Sessions</v-btn>
@@ -68,6 +68,16 @@
         </v-list>
         
         <v-divider></v-divider>
+        <div v-if="pendingSessionSave" class="px-3 py-3" role="status" aria-live="polite">
+          <div class="d-flex align-center ga-2">
+            <v-progress-circular indeterminate size="18" width="2" color="primary" />
+            <div class="flex-grow-1" style="min-width: 0">
+              <div class="font-weight-medium text-truncate">{{ pendingSessionSave.name }}</div>
+              <div class="text-caption text-medium-emphasis">Saving Session…</div>
+            </div>
+          </div>
+          <v-progress-linear indeterminate color="primary" class="mt-2" rounded height="3" />
+        </div>
       </div>
 
       <div class="d-flex flex-column" style="flex: 1 1 auto; overflow: hidden;">
@@ -180,19 +190,19 @@
       </div>
     </div>
   </v-navigation-drawer>
-  <v-dialog v-model="exportDialog.visible" max-width="480px"><v-card>
+  <v-dialog v-model="exportDialog.visible" :persistent="exportDialog.running" max-width="480px"><v-card>
     <v-card-title>Export offline HTML report</v-card-title><v-card-text>
       <v-select label="Include players" v-model="exportDialog.scope" :items="exportOptions" item-title="title" item-value="value" density="comfortable"></v-select>
       <v-checkbox v-model="exportDialog.targetOnly" label="Only damage to selected Combat Target" density="compact" hide-details></v-checkbox><p class="text-caption" v-if="exportDialog.targetOnly && !selectedTargetId">Select a Combat Target in the damage panel before exporting.</p><p class="text-caption">Single-file report with interactive scatter points, skill details and no visible application branding. Individual reports omit other players.</p>
-    </v-card-text><v-card-actions><v-spacer/><v-btn variant="text" @click="exportDialog.visible = false">Cancel</v-btn><v-btn color="primary" @click="saveExport">Save HTML</v-btn></v-card-actions></v-card>
+    </v-card-text><v-card-actions><v-spacer/><v-btn variant="text" :disabled="exportDialog.running" @click="exportDialog.visible = false">Cancel</v-btn><v-btn color="primary" :loading="exportDialog.running" :disabled="exportDialog.running" @click="saveExport">Save HTML</v-btn></v-card-actions></v-card>
   </v-dialog>
-  <v-dialog v-model="batchDialog.visible" max-width="600px"><v-card>
-    <v-card-title>Batch Export HTML Reports</v-card-title>
+  <v-dialog v-model="batchDialog.visible" :persistent="batchDialog.running" max-width="600px"><v-card>
+    <v-card-title>Batch Export Sessions</v-card-title>
     <v-card-text>
-      <p class="text-body-2 mb-3">Choose saved sessions to export. Each report will be a separate interactive HTML file in one ZIP. The currently loaded session will not change.</p>
-      <v-select v-model="batchDialog.ids" label="Sessions" :items="batchChoices" item-title="title" item-value="value" multiple chips closable-chips density="comfortable"></v-select>
-      <v-checkbox v-model="batchDialog.onlySelectedPlayer" label="Export one player from every report" density="compact"></v-checkbox>
-      <v-text-field v-if="batchDialog.onlySelectedPlayer" v-model="batchDialog.playerName" label="Exact character name" density="compact" hint="Sessions without that character will be reported as skipped." persistent-hint></v-text-field>
+      <p class="text-body-2 mb-3">Choose saved sessions to export in one ZIP. Each HTML report can be opened independently or imported directly from the ZIP into Companion. The currently loaded session will not change.</p>
+      <v-select v-model="batchDialog.ids" :disabled="batchDialog.running" label="Sessions" :items="batchChoices" item-title="title" item-value="value" multiple chips closable-chips density="comfortable"></v-select>
+      <v-checkbox v-model="batchDialog.onlySelectedPlayer" :disabled="batchDialog.running" label="Export one player from every report" density="compact"></v-checkbox>
+      <v-text-field v-if="batchDialog.onlySelectedPlayer" v-model="batchDialog.playerName" :disabled="batchDialog.running" label="Exact character name" density="compact" hint="Sessions without that character will be reported as skipped." persistent-hint></v-text-field>
       <p class="text-caption">Batch reports contain all combat targets for their session. Use single-session export for a specific selected Combat Target.</p>
       <v-progress-linear v-if="batchDialog.running" indeterminate class="mt-2"></v-progress-linear>
       <p v-if="batchDialog.progress" class="text-caption">{{ batchDialog.progress }}</p>
@@ -256,13 +266,14 @@
 <script lang="ts">
 import { defineComponent, onMounted, onUnmounted, inject, reactive, ref } from "vue";
 import { getSessions, getSessionSummary, renameSession, deleteSession, revealSessionFile, migrateSession, migrateAllSessions } from "@/apicall";
-import { sessions, activeSessionId, isNavDrawerOpen, fightSummary, condNameMap, liveFavoriteConditions, liveHiddenConditions, toggleLiveConditionPref } from "@/store";
+import { sessions, activeSessionId, isNavDrawerOpen, pendingSessionSave, fightSummary, condNameMap, liveFavoriteConditions, liveHiddenConditions, toggleLiveConditionPref } from "@/store";
 import { Session } from "@/types";
 import { EntityState, ActiveCondition } from "@/protocols";
 import { computed } from "vue";
 import { skillNameMap, selectedTargetId } from "@/store";
-import { exportPortableReport, buildPortableReportHTML } from "@/utils/portableReport";
-import { makeReportZip } from "@/utils/batchZip";
+import { exportPortableReport } from "@/utils/portableReport";
+import { prepareBundleReport, makeSessionBundle, type BundleReport } from "@/utils/sessionBundle";
+import { getReportNaming, reportDownloadName, type ReportNaming } from "@/utils/reportExportNaming";
 
 
 export default defineComponent({
@@ -288,15 +299,21 @@ export default defineComponent({
       });
     });
 
-    const exportDialog = reactive({visible:false, scope:'all', targetOnly:false, session:null as Session | null});
+    const exportDialog = reactive({visible:false, running:false, scope:'all', targetOnly:false, session:null as Session | null});
     const exportOptions = computed(() => [{title:'Whole party',value:'all'}, ...Object.values(fightSummary.players || {}).filter(p => !/^(?:Unknown Caster|Misc\. Anonymous Healing)$/i.test(p.name.trim())).map(p=>({title:p.name,value:p.id}))]);
     const openExport = (session:Session) => {exportDialog.session=session;exportDialog.scope='all';exportDialog.targetOnly=Boolean(selectedTargetId.value);exportDialog.visible=true;};
-    const saveExport = () => {
+    const saveExport = async () => {
+      if (exportDialog.running) return;
+      exportDialog.running = true;
       try {if(!exportDialog.session || activeSessionId.value !== exportDialog.session.id)throw new Error('Select and load the saved session first.');
+        const session = exportDialog.session;
+        const scope = exportDialog.scope;
+        const target = exportDialog.targetOnly ? selectedTargetId.value : '';
+        const fullSummary = await getSessionSummary(session.id);
         const nameMap:Record<number,string>={};for(const [id,value] of Object.entries(skillNameMap.value))nameMap[Number(id)]=value.name;
-        exportPortableReport(fightSummary, exportDialog.session.name, exportDialog.scope, nameMap, exportDialog.targetOnly ? selectedTargetId.value : '');
+        exportPortableReport(fullSummary, session.name, scope, nameMap, target, session.startTime);
         exportDialog.visible=false;
-      }catch(e){alert(e instanceof Error?e.message:'Unable to export report.');}
+      }catch(e){alert(e instanceof Error?e.message:'Unable to export report.');}finally{exportDialog.running=false;}
     };
     const batchDialog = reactive({ visible:false, ids:[] as string[], running:false, progress:'', onlySelectedPlayer:false, playerName:'' });
     const batchChoices = computed(() => sessions.value.filter(s=>s.id !== 'live').map(s=>({title:s.name + ' ('+new Date(s.startTime*1000).toLocaleString()+')',value:s.id})));
@@ -304,26 +321,26 @@ export default defineComponent({
     const saveBatchExport = async () => {
       if (batchDialog.running || !batchDialog.ids.length) return;
       batchDialog.running=true; batchDialog.progress='';
-      const skipped: string[]=[]; const reports: {name:string;html:string}[]=[];
+      const skipped: string[]=[]; const reports: (BundleReport & {naming:ReportNaming})[]=[];
+      const ids=[...new Set(batchDialog.ids)], onlySelectedPlayer=batchDialog.onlySelectedPlayer, playerName=batchDialog.playerName;
       const nameMap:Record<number,string>={};
       for(const [id,value] of Object.entries(skillNameMap.value)) nameMap[Number(id)]=value.name;
       try {
-        for(const id of batchDialog.ids) {
+        for(const id of ids) {
           const session=sessions.value.find(s=>s.id===id);
           if(!session) {skipped.push(id+': missing session');continue;}
-          batchDialog.progress=`Generating ${reports.length + skipped.length + 1} of ${batchDialog.ids.length}: ${session.name}`;
+          batchDialog.progress=`Generating ${reports.length + skipped.length + 1} of ${ids.length}: ${session.name}`;
           try {
             const summary=await getSessionSummary(id);
-            const player=batchDialog.onlySelectedPlayer ? Object.values(summary.players||{}).find(p=>p.name.trim().toLowerCase()===batchDialog.playerName.trim().toLowerCase()) : null;
-            if(batchDialog.onlySelectedPlayer&&!player)throw new Error('character not found');
-            const html=buildPortableReportHTML(summary,session.name,player?.id || 'all',nameMap);
-            const safe=session.name.replace(/[\\/:*?"<>|\x00-\x1f]/g,'_').slice(0,75) || 'session';
-            reports.push({name:`${safe}-${id.replace(/[^a-zA-Z0-9_-]/g,'_')}.html`,html});
+            const player=onlySelectedPlayer ? Object.values(summary.players||{}).find(p=>p.name.trim().toLowerCase()===playerName.trim().toLowerCase()) : null;
+            if(onlySelectedPlayer&&!player)throw new Error('character not found');
+            reports.push({...prepareBundleReport(summary,session.name,id,player?.id || 'all',nameMap),naming:getReportNaming(summary,'',session.startTime)});
           }catch(error){skipped.push(`${session.name}: ${error instanceof Error?error.message:'cannot read saved session'}`);}
         }
         if(!reports.length)throw new Error('No reports generated. '+skipped.join('; '));
-        const blob=makeReportZip(reports);const url=URL.createObjectURL(blob);
-        const link=document.createElement('a');link.href=url;link.download='midir-html-reports.zip';document.body.append(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(url),30000);
+        batchDialog.progress='Packaging and validating bundle…';
+        const {blob}=await makeSessionBundle(reports);const url=URL.createObjectURL(blob);
+        const link=document.createElement('a');link.href=url;link.download=reportDownloadName(reports.map(r=>r.naming),'zip');document.body.append(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(url),30000);
         batchDialog.visible=false;
         if(skipped.length)alert(`${reports.length} reports exported; ${skipped.length} skipped:\n${skipped.join('\n')}`);
       } catch(error) {alert(error instanceof Error?error.message:'Batch export failed');}
@@ -590,6 +607,7 @@ export default defineComponent({
 
     return {
       sessions,
+      pendingSessionSave,
       selectedTargetId,
       exportDialog, exportOptions, openExport, saveExport, batchDialog, batchChoices, openBatchExport, saveBatchExport,
       searchQuery,

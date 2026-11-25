@@ -38,7 +38,7 @@ func GetPacificLocation() *time.Location {
 func ParseMabiTime(t uint64) time.Time {
 	t = t / 1000
 
-	// Mabinogi uses C# ticks offset from year 0. 
+	// Mabinogi uses C# ticks offset from year 0.
 	// To get Unix Epoch offset (1970), we subtract 62135596800 seconds.
 	t -= 62135596800
 

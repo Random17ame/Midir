@@ -69,7 +69,13 @@
   </template>
 
     <template v-slot:[`item.dps`]="{ item }">
-      <span class="font-weight-bold text-h6">{{ formatNumber(item.dps) }}</span>
+      <span class="text-no-wrap">
+        <span class="font-weight-bold text-h6">{{ formatNumber(item.dps) }}</span><span
+          v-if="bossDpsForPlayer(item) !== null"
+          class="boss-dps-context"
+          title="Boss-only DPS for this selection, using the same duration as the primary DPS"
+        > ({{ formatNumber(bossDpsForPlayer(item)) }})</span>
+      </span>
     </template>
 
     <template v-slot:[`item.totalDamage`]="{ item }">
@@ -332,7 +338,13 @@
 
             <v-spacer></v-spacer>
             <div class="text-right">
-                <div class="text-h5 font-weight-bold mb-n1">{{ formatNumber(item.dps) }} DPS</div>
+                <div class="text-h5 font-weight-bold mb-n1 text-no-wrap">
+                  {{ formatNumber(item.dps) }}<span
+                    v-if="bossDpsForPlayer(item) !== null"
+                    class="boss-dps-context"
+                    title="Boss-only DPS for this selection, using the same duration as the primary DPS"
+                  > ({{ formatNumber(bossDpsForPlayer(item)) }})</span> DPS
+                </div>
                 <div class="text-subtitle-2 text-white" style="opacity: 0.9;">
                     {{ formatAbbreviated(item.totalDamage) }}
                     <span v-if="totalDamageForView > 0" class="text-white">
@@ -792,6 +804,9 @@ import {
   aggregatePlayerDamageForGroup,
   getEncounterDurationForTargets,
 } from "@/utils/targetGrouping";
+import { getDeathScopeWindow, scopedDeathTimes } from "@/utils/deathScope";
+import { bossIdsForDpsComparison, bossDpsForPlayerDisplay } from "@/utils/bossDpsDisplay";
+import { PET_DAMAGE_SKILL_ID, PET_DAMAGE_SKILL_LABEL } from "@/utils/petLabels";
 import TargetConditionView from "./TargetConditionView.vue";
 import { hiddenPlayers, toggleHiddenPlayer, setAllHiddenPlayers, globalHideMode, showClassColorsForVisiblePlayers, listSkillMetrics, cardSkillMetrics, dpsMeterFillMode } from "@/store";
 
@@ -831,6 +846,12 @@ const condNameMap = inject("condNameMap") as any;
 const expanded = ref<string[]>([]);
 const savedAnalysis = computed(() => activeSessionId.value !== "live");
 const showGhostRunner = ref(false);
+
+// Secondary boss-only DPS is contextual text, never a replacement for item.dps.
+// The original damage ordering and bar-fill calculations stay unchanged.
+const comparisonBossIds = computed(() => bossIdsForDpsComparison(fightSummary, selectedTargetId.value));
+const bossDpsForPlayer = (item: { id: string; totalDamage: number; dps: number }) =>
+  bossDpsForPlayerDisplay(fightSummary.players[item.id], comparisonBossIds.value, item.totalDamage, item.dps);
 
 const rawPlayer = (id: string) => (fightSummary.players as any)[id] as any;
 const skillEvents = (id: string) => (rawPlayer(id)?.skillUses || []) as any[];
@@ -875,12 +896,22 @@ const ghostBarWidth = (playerId: string, skillId: number, playerItem: any): numb
 const topPlayerDps = (): number => Math.max(0.001, ...playerDisplayData.value.flatMap((p: any) => [Number(p.dps || 0), ghostDps(p.id)]));
 const playerGhostWidth = (id: string): number => 100 * ghostDps(id) / topPlayerDps();
 const playerAverageWidth = (player: any): number => 100 * Number(player.dps || 0) / topPlayerDps();
+// Only the Damage Done death flags follow target/encounter selection. The
+// separate Damage Graph keeps its existing session-wide death markers.
+const selectedDeathWindow = computed(() => {
+  const id = selectedTargetId.value;
+  if (!id) return null;
+  const members = isGroupTargetId(id) ? getGroupMemberTargetIds(id, fightSummary) : [id];
+  // A group without resolved targets must not fall back to session deaths.
+  if (!members.length) return null;
+  return getDeathScopeWindow(fightSummary, id, members);
+});
 const deathSnapshots = (playerId: string) => {
   const player = rawPlayer(playerId);
   if (!player) return [];
   const start = Number(fightSummary.startTime || 0);
   const events = skillEvents(playerId);
-  return [...(player.deaths || [])].sort((a: number, b: number) => a - b).map((death: number) => {
+  return scopedDeathTimes(player.deaths, selectedTargetId.value, selectedDeathWindow.value).map((death: number) => {
     const time = Math.max(0.001, Number(death) - start);
     const skills = new Map<number, { id: number; damage: number; hits: number }>();
     for (const event of events) {
@@ -1279,12 +1310,12 @@ const skillProgress = (playerId: string, skillId: number): SkillProgress | undef
 watch([activeSessionId, selectedTargetId, sessions, personalBestSessionLimit, personalBestHistoryFolder, () => fightSummary.players], () => { void calculateProgress(); }, { immediate: true });
 
 const getSkillName = (skillId: number): string => {
-  if (skillId === 9999) return "Pets";
+  if (skillId === PET_DAMAGE_SKILL_ID) return PET_DAMAGE_SKILL_LABEL;
   return skillNameMap.value[skillId]?.name || `unknownSkill:${skillId}`;
 };
 
 const getSkillImageSrc = (skillId: number): string => {
-  if (skillId === 9999) return "";
+  if (skillId === PET_DAMAGE_SKILL_ID) return "";
   return skillNameMap.value[skillId]?.iconUrl || "";
 };
 
@@ -1420,6 +1451,7 @@ const toggleAllPlayersVisibility = () => {
 </script>
 
 <style scoped>
+ .boss-dps-context {color:rgba(var(--v-theme-on-surface), .66);font-size:.77em;font-weight:500;white-space:nowrap}
  .ghost-column-zone {position:relative;width:100%;height:100%;cursor:help}
  .ghost-column-fill {position:absolute;left:0;top:0;height:100%;background:rgba(0,0,0,.58);border-radius:9999px}
  .ghost-current-fill {position:absolute;left:0;top:0;height:100%}

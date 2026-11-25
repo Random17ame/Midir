@@ -66,6 +66,8 @@ export interface PreciseDamageEvent {
   damage: number;
   critical?: boolean;
   delayed?: boolean;
+  petRaceId?: number;
+  petName?: string;
 }
 
 export interface SkillObservation {
@@ -171,6 +173,12 @@ export interface EntityState {
 }
 
 export interface FightSummary {
+  recordingId?: string; // Durable export identity, not the session storage filename.
+  healingIncomplete?: boolean;
+  minimalistMode?: boolean;
+  liveChartPaused?: boolean;
+  /** A live-only Arcana presentation projection, never exportable evidence. */
+  liveCompact?: boolean;
   encounterDuration: number;
   startTime?: number;
   endTime?: number;

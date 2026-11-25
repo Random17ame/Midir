@@ -23,3 +23,4 @@ tools/data_backups/
 *.db-wal
 live-session.ndjson
 settings.json
+minimalist-mode.json

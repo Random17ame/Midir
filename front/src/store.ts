@@ -2,6 +2,7 @@ import { ref, computed, shallowReactive, reactive, watch } from "vue";
 import { PlayerCacheInfo, Session } from "./types";
 import { FightSummary } from "@/protocols";
 import { SocketClient } from "./socketClient";
+import { normalizeSessionNamePreferences } from "./utils/sessionNameFormat";
 
 export const socket = new SocketClient(
   location.protocol.replace("http", "ws") + "//" + location.host + "/ws"
@@ -34,9 +35,11 @@ export const playerNameCache = shallowReactive<Record<string, PlayerCacheInfo>>(
 
 // --- SESSION STATE ---
 export const sessions = ref<Session[]>([]);
+// UI-only status for a pending live-session save. Never treated as a saved file.
+export const pendingSessionSave = ref<{ name: string; startedAt: number } | null>(null);
 export const activeSessionId = ref<string | "live">("live");
 export const isNavDrawerOpen = ref(true);
-export const activeTool = ref<"dps" | "settings">("dps");
+export const activeTool = ref<"dps" | "settings" | "records">("dps");
 export const selectedTargetId = ref<string>("");
 
 
@@ -48,6 +51,17 @@ export const fightSummary = reactive<FightSummary>({
   damageTaken: {},
   graphData: {},
 });
+
+// Session naming is a local presentation preference, independent of capture.
+const SESSION_NAMING_KEY = "midir_session_naming_v1";
+export const sessionNamePreferences = ref(normalizeSessionNamePreferences((() => {
+  try { return JSON.parse(localStorage.getItem(SESSION_NAMING_KEY) || "null"); }
+  catch { return null; }
+})()));
+watch(sessionNamePreferences, (value) => {
+  try { localStorage.setItem(SESSION_NAMING_KEY, JSON.stringify(value)); }
+  catch (error) { console.warn("Unable to save session naming preferences", error); }
+}, { deep: true });
 
 // Personal Best Progress: user-controlled historical session scan and directory.
 // Kept in localStorage; no changes to session files or live parsing.

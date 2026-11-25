@@ -46,6 +46,9 @@ type eventPublisher struct {
 	playerUpdateBatch []*PlayerInfo
 	batchMu           sync.Mutex
 
+	// Serialize mode changes with the paired aggregation and event-log paths.
+	processingMu sync.Mutex
+
 	// Async logging
 	logCh       chan iEvent
 	damageLogMu sync.Mutex
@@ -126,6 +129,7 @@ func newEventPublisher(ctx context.Context, packetCh <-chan *packet.GamePacket, 
 		v.preCombatBufferSeconds.Store(int32(cfg.PreCombatBufferSeconds))
 	}
 	v.aggregator.SetLive(isLive)
+	v.setMinimalistMode(loadMinimalistPreference())
 
 	go v.loop()
 	go v.startLogger() // Start the logger worker
@@ -134,6 +138,8 @@ func newEventPublisher(ctx context.Context, packetCh <-chan *packet.GamePacket, 
 }
 
 func (t *eventPublisher) ClearCache() {
+	t.processingMu.Lock()
+	defer t.processingMu.Unlock()
 	t.aggregator.Clear()
 	t.preCombatMu.Lock()
 	t.preCombatUses = nil
@@ -142,6 +148,60 @@ func (t *eventPublisher) ClearCache() {
 	t.lastHealingCasterID = 0
 	t.Unlock()
 	logger.Println("Clear command received, aggregator state has been reset.")
+}
+
+// A mode change is a presentation/recording preference, not a capture restart.
+// Mark the recording incomplete before omitting any healing, and reset stale
+// attribution hints when switching back. Existing evidence is never deleted.
+func (t *eventPublisher) setMinimalistMode(enabled bool) {
+	t.processingMu.Lock()
+	defer t.processingMu.Unlock()
+	t.setMinimalistModeLocked(enabled)
+}
+
+func (t *eventPublisher) updateMinimalistMode(enabled bool) error {
+	t.processingMu.Lock()
+	defer t.processingMu.Unlock()
+	if err := saveMinimalistPreference(enabled); err != nil {
+		return err
+	}
+	t.setMinimalistModeLocked(enabled)
+	return nil
+}
+
+func (t *eventPublisher) setMinimalistModeLocked(enabled bool) {
+	if t.sm != nil {
+		t.sm.setHealingDisabled(enabled)
+	}
+	a := t.aggregator
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.minimalistMode.Load() == enabled {
+		return
+	}
+	a.minimalistMode.Store(enabled)
+	a.lastHealingCaster = make(map[uint64]healingCasterHint)
+	a.recentShieldCasts = make(map[uint64]healingCasterHint)
+	a.recentSaintHealingCasts = make(map[uint64]healingCasterHint)
+	a.lastHealingCasterID = 0
+	a.lastHealingCasterAt = 0
+	a.veilStates = make(map[uint64]veilState)
+	t.lastHealingCasterID = 0
+}
+
+func (t *eventPublisher) processAndLogPacket(p *packet.GamePacket) {
+	t.processingMu.Lock()
+	defer t.processingMu.Unlock()
+	t.aggregator.ProcessPacket(p)
+	t.logPacketAsEvent(p)
+}
+
+func (t *eventPublisher) liveSummary(compact bool) FightSummary {
+	summary := t.aggregator.GetLiveSummary(compact)
+	if t.sm != nil {
+		summary.HealingIncomplete = t.sm.healingIncomplete()
+	}
+	return summary
 }
 
 func (t *eventPublisher) QueuePlayerUpdate(p *PlayerInfo) {
@@ -169,8 +229,7 @@ func (t *eventPublisher) loop() {
 			t.pendingMu.Lock()
 			for _, pd := range t.pendingDisables {
 				if !pd.cancelled {
-					t.aggregator.ProcessPacket(pd.packet)
-					t.logPacketAsEvent(pd.packet)
+					t.processAndLogPacket(pd.packet)
 				}
 			}
 			t.pendingDisables = make(map[string]*pendingDisable)
@@ -185,8 +244,7 @@ func (t *eventPublisher) loop() {
 				t.pendingMu.Unlock()
 
 				// Normal processing for the expired Disable event
-				t.aggregator.ProcessPacket(p)
-				t.logPacketAsEvent(p)
+				t.processAndLogPacket(p)
 			} else {
 				t.pendingMu.Unlock()
 			}
@@ -276,8 +334,7 @@ func (t *eventPublisher) loop() {
 								t.pendingMu.Unlock()
 
 								// Process the Disable packet immediately with aligned timestamp
-								t.aggregator.ProcessPacket(disablePacket)
-								t.logPacketAsEvent(disablePacket)
+								t.processAndLogPacket(disablePacket)
 							}
 						} else {
 							t.pendingMu.Unlock()
@@ -287,11 +344,8 @@ func (t *eventPublisher) loop() {
 				}
 			}
 
-			// --- PATH 1: Update the live aggregator (for the UI) ---
-			t.aggregator.ProcessPacket(p)
-
-			// --- PATH 2: Parse and log individual events (for saving files) ---
-			t.logPacketAsEvent(p)
+			// Update the live aggregator and durable evidence under the same mode.
+			t.processAndLogPacket(p)
 
 			// logger.Printf("<-- [END] Finished processing packet with OpCode: 0x%X", p.Op)
 
@@ -370,7 +424,7 @@ func (t *eventPublisher) loop() {
 			opCountsThisSecond = make(map[uint32]uint64)
 
 			// 1. Send Summary
-			summary := t.aggregator.GetSummary()
+			summary := t.liveSummary(true)
 			summaryMsg := WebSocketMessage{
 				Type: "summary",
 				Data: summary,
@@ -474,7 +528,7 @@ func (t *eventPublisher) logPacketAsEvent(p *packet.GamePacket) {
 
 		// Now, create damage events for each hit using the correct skill ID.
 		for _, sub := range pack.SubPackets {
-			if sub.Hit != nil && (sub.Hit.Damage != 0 || sub.Hit.ManaDamage > 0) {
+			if sub.Hit != nil && (sub.Hit.Damage != 0 || sub.Hit.ManaDamage > 0) && keepMinimalistDamageEvent(sub.Hit.Damage, float32(sub.Hit.ManaDamage), t.aggregator.minimalistMode.Load()) {
 				isCrit := (sub.Hit.Options & packet.CombatActionHitOptionsCritical) != 0
 				e := &eventDamage{
 					eventBase: eventBase{
@@ -499,6 +553,11 @@ func (t *eventPublisher) logPacketAsEvent(p *packet.GamePacket) {
 		// packet variants. Try the specific healing structure first; ordinary
 		// effect packets fall through to the existing parser below.
 		if heal, parseErr := packet.ParseHealingPacket(p); parseErr == nil {
+			// The opcode is shared with offensive effects: classify its structure
+			// first, and skip only the confirmed healing variant in Minimalist Mode.
+			if t.aggregator.minimalistMode.Load() {
+				break
+			}
 			switch heal.Type {
 			case 0x19, 0x28:
 				t.lastHealingCasterID = heal.EntityID

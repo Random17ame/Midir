@@ -1,5 +1,5 @@
 <template>
-  <div v-if="chartData.labels.length > 0 || scatterPlayers.length > 0 || scatterEnemies.length > 0" class="graph-container">
+  <div v-if="chartData.labels.length > 0 || (showScatter && (scatterPlayers.length > 0 || scatterEnemies.length > 0))" class="graph-container">
     <div class="pa-4">
       <div class="d-flex ga-4 align-center mb-4 flex-wrap">
         <div v-if="conditionItems.length > 0" style="max-width: 320px; flex-grow: 1;">
@@ -52,12 +52,12 @@
       <div style="height: 500px" class="chart-wrapper mb-6">
         <LineChart v-if="chartData.datasets.length > 0" :data="chartData" :options="chartOptions" />
         <div v-else class="d-flex align-center justify-center text-medium-emphasis h-100 text-center pa-4">
-          All graph players are hidden. Use the player buttons in the scatter chart below to show them again.
+          {{ showScatter ? "All graph players are hidden. Use the player buttons in the scatter chart below to show them again." : "No live graph players are visible." }}
         </div>
       </div>
       
       <!-- Scatter plot is independent of the main graph's visible-player count. -->
-      <v-row class="mx-0 my-6 clear-both w-100">
+      <v-row v-if="showScatter" class="mx-0 my-6 clear-both w-100">
         <v-col cols="12" class="pa-0">
           <v-card
             class="pa-4 border-card elevation-4"
@@ -80,7 +80,7 @@
   </div>
   <v-sheet v-else class="d-flex align-center justify-center rounded-lg" height="400" style="background: #0f172a; border: 1px solid rgba(255, 255, 255, 0.08)">
     <div class="text-h6 text-grey-darken-1">
-      No graph or skill-hit data is available for this session.
+      {{ showScatter ? "No graph or skill-hit data is available for this session." : "Detailed graphs are available after saving the session." }}
     </div>
   </v-sheet>
 </template>
@@ -108,7 +108,7 @@ import {
   Filler,
 } from "chart.js";
 // Import selectedTargetId from the store
-import { fightSummary, selectedTargetId, hiddenPlayers, showClassColorsForVisiblePlayers, globalHideMode } from "@/store";
+import { fightSummary, selectedTargetId, hiddenPlayers, showClassColorsForVisiblePlayers, globalHideMode, activeSessionId } from "@/store";
 import {
   isGroupTargetId,
   getGroupMemberTargetIds,
@@ -171,6 +171,7 @@ export default defineComponent({
   components: { LineChart, ConditionTimeline, DamageScatterChart },
   setup() {
     const condNameMap = inject("condNameMap") as any;
+    const showScatter = computed(() => activeSessionId.value !== "live");
     const getTargetHPAtTime = (t: number, hpHistory: any[]) => {
       if (!hpHistory || hpHistory.length === 0) return 100;
       let lastPt = hpHistory[0];
@@ -715,6 +716,7 @@ export default defineComponent({
       return id ? getGroupMemberTargetIds(id, fightSummary) : [];
     });
     return {
+      showScatter,
       scatterTargetIds,
       scatterPlayers,
       scatterEnemies,

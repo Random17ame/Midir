@@ -419,10 +419,13 @@
         </div>
 
         <div class="main-dashboard-content">
+          <div v-if="fightSummary.healingIncomplete" class="text-caption text-medium-emphasis mb-2">
+            Healing Done unavailable: this recording has incomplete healing data.
+          </div>
           <v-tabs v-model="tab" grow density="compact" class="modern-tabs mb-6">
             <v-tab value="damageDealt">Damage Dealt</v-tab>
             <!-- Experimental healing UI: optional until effective-healing and shield attribution are validated. -->
-            <v-tab v-if="showHealingTab" value="healing">Healing Done</v-tab>
+            <v-tab v-if="healingTabAvailable" value="healing">Healing Done</v-tab>
             <v-tab value="damageTaken">Damage Taken</v-tab>
             <v-tab value="graph">Graph</v-tab>
           </v-tabs>
@@ -431,14 +434,19 @@
             <v-window-item value="damageDealt">
               <apply-damage-by-skill :attackerNameMap="attackerNameMap" />
               </v-window-item>
-            <v-window-item v-if="showHealingTab" value="healing">
+            <v-window-item v-if="healingTabAvailable" value="healing">
               <apply-healing-by-skill :attackerNameMap="attackerNameMap" />
               </v-window-item>
             <v-window-item value="damageTaken">
               <damage-taken-by-source />
             </v-window-item>
             <v-window-item value="graph">
-              <damage-graph />
+              <v-sheet v-if="liveChartPaused" class="d-flex flex-column align-center justify-center rounded-lg text-medium-emphasis" height="400" role="status">
+                <v-icon size="32" class="mb-2">mdi-pause-circle-outline</v-icon>
+                <div class="text-subtitle-1">Chart updates paused during combat</div>
+                <div class="text-caption">Minimalist Mode · Damage evidence is still being recorded.</div>
+              </v-sheet>
+              <damage-graph v-else />
             </v-window-item>
           </v-window>
         </div>
@@ -477,6 +485,7 @@ import ApplyDamageBySkillComponent from "@/components/applyDamageBySkill.vue";
 import ApplyHealingBySkillComponent from "@/components/applyHealingBySkill.vue";
 import DamageTakenBySourceComponent from "@/components/DamageTakenBySource.vue";
 import DamageGraph from "@/components/DamageGraph.vue";
+import { isLiveChartPaused, isHealingAvailable } from "@/utils/minimalistMode";
 import TargetConditionView from "@/components/TargetConditionView.vue";
 
 const SPECIAL_TARGET_CLASSES: Record<number, string> = {
@@ -500,7 +509,9 @@ export default defineComponent({
   setup() {
     const tab = ref("damageDealt");
     // If Healing Done is disabled while selected, return to the regular damage view.
-    watch(showHealingTab, (enabled) => {
+    const healingTabAvailable = computed(() => showHealingTab.value && isHealingAvailable(fightSummary, activeSessionId.value));
+    const liveChartPaused = computed(() => isLiveChartPaused(fightSummary, activeSessionId.value));
+    watch(healingTabAvailable, (enabled) => {
       if (!enabled && tab.value === "healing") tab.value = "damageDealt";
     });
     const condNameMap = inject("condNameMap") as any;
@@ -1522,7 +1533,7 @@ export default defineComponent({
     return {
       getTargetClass,
       tab,
-      showHealingTab,
+      showHealingTab, healingTabAvailable, liveChartPaused, fightSummary,
       selectedTargetId,
       targetList,
       formattedEncounterDuration,

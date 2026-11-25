@@ -31,8 +31,6 @@ type EntityInfo struct {
 	EntityType            uint8  // 2: pet, 11: puppet, 6: dollbag, 8: golem, etc.
 	SecondaryOwnerId      uint64 // secondary owner ID parsed from appearance block
 
-
-
 	CombatPower       float32 // From element[26]
 	CurrentLevel      uint16  // From element[30]
 	TotalLevel        uint32  // From element[31]
@@ -111,7 +109,6 @@ func ParseEntityAppearPacket(msg Message) (*EntityInfo, error) {
 	}
 
 	v.Name = msg[2].Data().(string)
-
 
 	if msg[5].Type() != MessageElemTypeInt {
 		err := fmt.Errorf("raceId has unexpected type %v", msg[5].Type())

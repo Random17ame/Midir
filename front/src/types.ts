@@ -24,6 +24,8 @@ export interface SessionSummaryEnemy {
 }
 
 export interface SessionSummaryData {
+  recordingId?: string;
+  healingIncomplete?: boolean;
   duration: number;
   totalDamage: number;
   players: SessionSummaryPlayer[];
@@ -35,5 +37,7 @@ export interface Session {
   name: string;
   startTime: number; // Unix timestamp
   endTime?: number; // Unix timestamp, optional for active sessions
+  fileSize?: number; // Size of the saved NDJSON file, when listed from disk
+  modifiedMs?: number; // Filesystem modification time in Unix milliseconds
   summary?: SessionSummaryData;
 }

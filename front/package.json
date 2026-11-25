@@ -10,7 +10,8 @@
     "preview": "vite preview --host 0.0.0.0",
     "prebuild": "node ../scripts/check-node-security.cjs",
     "pretypecheck": "node ../scripts/check-node-security.cjs",
-    "predev": "node ../scripts/check-node-security.cjs"
+    "predev": "node ../scripts/check-node-security.cjs",
+    "test": "node tests/arcana-scopes.test.cjs && node tests/death-scope.test.cjs && node tests/pet-labels.test.cjs && node tests/exporter-scopes.test.cjs && node tests/boss-dps-display.test.cjs && node tests/burst-leaderboard.test.cjs && node tests/burst-comparison.test.cjs && node tests/report-export-naming.test.cjs && node tests/session-save-naming.test.cjs && node tests/minimalist-mode.test.cjs && node tests/session-bundle.test.cjs"
   },
   "dependencies": {
     "@mdi/font": "^7.4.47",

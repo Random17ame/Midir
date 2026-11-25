@@ -113,12 +113,14 @@ type SkillObservation struct {
 }
 
 type PreciseDamageEvent struct {
-	AtMs     int64   `json:"atMs"`
-	SkillID  uint16  `json:"skillId"`
-	TargetID string  `json:"targetId"`
-	Damage   float32 `json:"damage"`
-	Critical bool    `json:"critical,omitempty"`
-	Delayed  bool    `json:"delayed,omitempty"`
+	AtMs      int64   `json:"atMs"`
+	SkillID   uint16  `json:"skillId"`
+	TargetID  string  `json:"targetId"`
+	Damage    float32 `json:"damage"`
+	Critical  bool    `json:"critical,omitempty"`
+	Delayed   bool    `json:"delayed,omitempty"`
+	PetRaceID uint32  `json:"petRaceId,omitempty"`
+	PetName   string  `json:"petName,omitempty"`
 }
 
 // Replace your singular event struct with a secondary grouped layout
@@ -133,6 +135,8 @@ type SkillGroupEvent struct {
 // TargetHitMeta aggregates a single player/second/skill/recipient combination.
 // It does not claim that multiple hits mean a single skill activation.
 type TargetHitMeta struct {
+	PetRaceID uint32 `json:"petRaceId,omitempty"`
+	PetName   string `json:"petName,omitempty"`
 	TargetID  string `json:"targetId"`
 	SkillID   uint16 `json:"skillId"`
 	HitCount  uint32 `json:"hitCount"`
@@ -142,6 +146,8 @@ type TargetHitMeta struct {
 }
 
 type SkillHitMeta struct {
+	PetRaceID uint32 `json:"petRaceId,omitempty"`
+	PetName   string `json:"petName,omitempty"`
 	SkillID   uint16 `json:"skillId"`
 	HitCount  uint32 `json:"hitCount"`
 	Damage    uint64 `json:"damage"`
@@ -245,6 +251,13 @@ type EntityState struct {
 
 // FightSummary's EncounterDuration now represents the time from the first to last damage event.
 type FightSummary struct {
+	RecordingID string `json:"recordingId,omitempty"` // Saved recording identity; absent for live summaries.
+	// Additive metadata; historical files without the flag retain legacy behavior.
+	HealingIncomplete bool `json:"healingIncomplete,omitempty"`
+	// Live presentation flags only. Never written as saved summary data.
+	MinimalistMode    bool                                   `json:"minimalistMode,omitempty"`
+	LiveChartPaused   bool                                   `json:"liveChartPaused,omitempty"`
+	LiveCompact       bool                                   `json:"liveCompact,omitempty"`
 	EncounterDuration float64                                `json:"encounterDuration"`
 	StartTime         int64                                  `json:"startTime"` // NEW: Encounter Start Timestamp
 	EndTime           int64                                  `json:"endTime"`   // NEW: Encounter End Timestamp

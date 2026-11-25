@@ -134,6 +134,7 @@ import { DamageBreakdown, SkillStats } from "@/protocols";
 import { isGroupTargetId, getGroupMemberTargetIds, getEncounterDurationForTargets } from "@/utils/targetGrouping";
 import { toggleHiddenPlayer } from "@/store";
 import { getMabiNameColor, getClassColor } from "@/util";
+import { PET_DAMAGE_SKILL_ID, PET_DAMAGE_SKILL_LABEL } from "@/utils/petLabels";
 
 export default defineComponent({
   name: "ApplyHealingBySkill",
@@ -251,7 +252,7 @@ export default defineComponent({
 
     const getSkillName = (skillId: number): string => {
       if (skillId === 0) return "Uncategorized Healing";
-      if (skillId === 9999) return "Pets";
+      if (skillId === PET_DAMAGE_SKILL_ID) return PET_DAMAGE_SKILL_LABEL;
       return skillNameMap.value?.[skillId]?.name || `Unknown Skill: ${skillId}`;
     };
 

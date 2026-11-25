@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -46,36 +47,42 @@ type SessionSummaryEnemy struct {
 }
 
 type SessionSummaryData struct {
-	Name         string                 `json:"name"`
-	StartTime    int64                  `json:"startTime"`
-	Duration     float64                `json:"duration"`
-	TotalDamage  float32                `json:"totalDamage"`
-	TotalHealing float32                `json:"totalHealing"`
-	Players      []SessionSummaryPlayer `json:"players"`
-	Enemies      []SessionSummaryEnemy  `json:"enemies"`
+	RecordingID       string                 `json:"recordingId,omitempty"` // Durable export identity, independent of storage filename.
+	HealingIncomplete bool                   `json:"healingIncomplete,omitempty"`
+	Name              string                 `json:"name"`
+	StartTime         int64                  `json:"startTime"`
+	Duration          float64                `json:"duration"`
+	TotalDamage       float32                `json:"totalDamage"`
+	TotalHealing      float32                `json:"totalHealing"`
+	Players           []SessionSummaryPlayer `json:"players"`
+	Enemies           []SessionSummaryEnemy  `json:"enemies"`
 }
 
 type Session struct {
-	ID        string `json:"id"`
-	Name      string `json:"name"`
-	StartTime int64  `json:"startTime"`
-	EndTime   int64  `json:"endTime,omitempty"`
+	ID         string `json:"id"`
+	Name       string `json:"name"`
+	StartTime  int64  `json:"startTime"`
+	EndTime    int64  `json:"endTime,omitempty"`
+	FileSize   int64  `json:"fileSize,omitempty"`
+	ModifiedMs int64  `json:"modifiedMs,omitempty"`
 
 	Summary *SessionSummaryData `json:"summary,omitempty"`
 
-	ndjsonFile *os.File       `json:"-"`
-	pcapWriter *pcapgo.Writer `json:"-"`
-	pcapFile   *os.File       `json:"-"`
-	events     []iEvent
-	eventBytes int
-	eventTypes map[string]int
+	ndjsonFile        *os.File       `json:"-"`
+	pcapWriter        *pcapgo.Writer `json:"-"`
+	pcapFile          *os.File       `json:"-"`
+	events            []iEvent
+	eventBytes        int
+	eventTypes        map[string]int
+	healingIncomplete bool // sticky for this recording, even if mode is later disabled
 }
 
 type SessionManager struct {
-	logDirectory   string
-	currentSession *Session
-	mu             sync.RWMutex
-	recordPcap     bool
+	logDirectory    string
+	currentSession  *Session
+	mu              sync.RWMutex
+	recordPcap      bool
+	healingDisabled bool // current preference, inherited by newly started recordings
 }
 
 func NewSessionManager(logDir string, recordPcap bool) (*SessionManager, error) {
@@ -95,6 +102,23 @@ func NewSessionManager(logDir string, recordPcap bool) (*SessionManager, error) 
 	return sm, nil
 }
 
+// Keep a sticky provenance flag for any recording in which healing was
+// disabled. Capture restarts and turning the mode off must not erase it.
+func (sm *SessionManager) setHealingDisabled(disabled bool) {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	sm.healingDisabled = disabled
+	if disabled && sm.currentSession != nil {
+		sm.currentSession.healingIncomplete = true
+	}
+}
+
+func (sm *SessionManager) healingIncomplete() bool {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	return sm.currentSession != nil && sm.currentSession.healingIncomplete
+}
+
 // StartLiveSession creates or overwrites the temporary live session file.
 func (sm *SessionManager) StartLiveSession() (*Session, error) {
 	// logger.Println("[Locking] sessionManager.StartLiveSession attempting to lock...")
@@ -112,11 +136,12 @@ func (sm *SessionManager) StartLiveSession() (*Session, error) {
 
 	now := time.Now()
 	s := &Session{
-		ID:         liveSessionFilename,
-		Name:       "Live Session",
-		StartTime:  now.Unix(),
-		events:     make([]iEvent, 0, 1000),
-		eventTypes: make(map[string]int),
+		ID:                liveSessionFilename,
+		Name:              "Live Session",
+		StartTime:         now.Unix(),
+		events:            make([]iEvent, 0, 1000),
+		eventTypes:        make(map[string]int),
+		healingIncomplete: sm.healingDisabled,
 	}
 
 	if sm.recordPcap {
@@ -163,24 +188,37 @@ func (sm *SessionManager) StopCurrentSession() {
 	sm.currentSession = nil
 }
 
-// SaveLiveSession renames the live session file to a permanent one, writing cached in-memory events.
+// SaveLiveSession preserves the legacy error-only API for callers and tests.
 func (sm *SessionManager) SaveLiveSession(name string) error {
+	_, err := sm.SaveLiveSessionResult(name)
+	return err
+}
+
+// SaveLiveSessionResult publishes the complete session before returning its list
+// metadata. The HTTP handler can show the saved entry without rescanning all
+// historical files. Temporary files remain hidden from the session list.
+func (sm *SessionManager) SaveLiveSessionResult(name string) (*Session, error) {
 	sm.mu.Lock()
 	defer func() {
 		sm.mu.Unlock()
 	}()
 
 	if sm.currentSession == nil || sm.currentSession.ID != liveSessionFilename {
-		return fmt.Errorf("no active live session to save")
+		return nil, fmt.Errorf("no active live session to save")
+	}
+
+	newNdjsonFilename := fmt.Sprintf("session-%d.ndjson", time.Now().UnixMilli())
+	newPath := filepath.Join(sm.logDirectory, newNdjsonFilename)
+	if _, statErr := os.Stat(newPath); statErr == nil {
+		return nil, fmt.Errorf("saved session filename already exists; retry save")
+	} else if !os.IsNotExist(statErr) {
+		return nil, statErr
 	}
 
 	// Close PCAP file handle if open
 	if sm.currentSession.pcapFile != nil {
 		sm.currentSession.pcapFile.Close()
 	}
-
-	newNdjsonFilename := fmt.Sprintf("session-%d.ndjson", time.Now().UnixMilli())
-	newPath := filepath.Join(sm.logDirectory, newNdjsonFilename)
 
 	var summary *FightSummary
 	var err error
@@ -194,7 +232,13 @@ func (sm *SessionManager) SaveLiveSession(name string) error {
 	}
 
 	var summaryData SessionSummaryData
+	recordingID, identityErr := newRecordingID()
+	if identityErr != nil {
+		return nil, fmt.Errorf("could not allocate recording identity: %w", identityErr)
+	}
+	summaryData.RecordingID = recordingID
 	summaryData.Name = name
+	summaryData.HealingIncomplete = sm.currentSession.healingIncomplete
 	summaryData.StartTime = sm.currentSession.StartTime
 
 	if err == nil && summary != nil {
@@ -268,7 +312,7 @@ func (sm *SessionManager) SaveLiveSession(name string) error {
 
 	newF, err := os.CreateTemp(sm.logDirectory, ".midir-saving-*.tmp")
 	if err != nil {
-		return fmt.Errorf("failed to create permanent session file: %w", err)
+		return nil, fmt.Errorf("failed to create permanent session file: %w", err)
 	}
 	defer os.Remove(newF.Name()) // Only removes failed/incomplete saves.
 	defer newF.Close()
@@ -280,10 +324,10 @@ func (sm *SessionManager) SaveLiveSession(name string) error {
 	}
 	sumBytes, err := json.Marshal(sumEvent)
 	if err != nil {
-		return fmt.Errorf("failed to marshal summary: %w", err)
+		return nil, fmt.Errorf("failed to marshal summary: %w", err)
 	}
 	if _, err := newF.Write(append(sumBytes, '\n')); err != nil {
-		return fmt.Errorf("failed to write summary: %w", err)
+		return nil, fmt.Errorf("failed to write summary: %w", err)
 	}
 
 	// Write cached in-memory events to log file
@@ -291,21 +335,21 @@ func (sm *SessionManager) SaveLiveSession(name string) error {
 	encoder := json.NewEncoder(writer)
 	for _, e := range sm.currentSession.events {
 		if err := encoder.Encode(e); err != nil {
-			return fmt.Errorf("failed to encode session event: %w", err)
+			return nil, fmt.Errorf("failed to encode session event: %w", err)
 		}
 	}
 	if err := writer.Flush(); err != nil {
-		return fmt.Errorf("failed to flush event writer: %w", err)
+		return nil, fmt.Errorf("failed to flush event writer: %w", err)
 	}
 
 	if err := newF.Sync(); err != nil {
-		return fmt.Errorf("failed to sync session: %w", err)
+		return nil, fmt.Errorf("failed to sync session: %w", err)
 	}
 	if err := newF.Close(); err != nil {
-		return fmt.Errorf("failed to close session: %w", err)
+		return nil, fmt.Errorf("failed to close session: %w", err)
 	}
 	if err := os.Rename(newF.Name(), newPath); err != nil {
-		return fmt.Errorf("failed to publish saved session: %w", err)
+		return nil, fmt.Errorf("failed to publish saved session: %w", err)
 	}
 
 	if sm.recordPcap {
@@ -317,7 +361,47 @@ func (sm *SessionManager) SaveLiveSession(name string) error {
 	}
 
 	sm.currentSession = nil
-	return nil
+	for i := range summaryData.Players {
+		if icon, ok := arcanaNameToIcon[summaryData.Players[i].ArcanaName]; ok {
+			summaryData.Players[i].ArcanaIcon = icon
+		}
+	}
+	// Return only the fields displayed by the history sidebar. The saved
+	// NDJSON retains its complete summary and event evidence; returning the
+	// entire skill-use history here could freeze the browser parsing the reply.
+	listSummary := sessionListSummary(summaryData)
+	return &Session{
+		ID:        newNdjsonFilename,
+		Name:      name,
+		StartTime: summaryData.StartTime,
+		Summary:   &listSummary,
+	}, nil
+}
+
+// sessionListSummary is a lightweight projection for the save response only.
+// It must never replace the complete summary stored in the session file.
+func sessionListSummary(data SessionSummaryData) SessionSummaryData {
+	result := SessionSummaryData{
+		RecordingID:       data.RecordingID,
+		HealingIncomplete: data.HealingIncomplete,
+		Name:              data.Name,
+		StartTime:         data.StartTime,
+		Duration:          data.Duration,
+		TotalDamage:       data.TotalDamage,
+		TotalHealing:      data.TotalHealing,
+		Enemies:           data.Enemies,
+	}
+	for _, p := range data.Players {
+		result.Players = append(result.Players, SessionSummaryPlayer{
+			ID:          p.ID,
+			Name:        p.Name,
+			ArcanaName:  p.ArcanaName,
+			ArcanaIcon:  p.ArcanaIcon,
+			DPS:         p.DPS,
+			TotalDamage: p.TotalDamage,
+		})
+	}
+	return result
 }
 
 // GetAllSessions scans for permanent logs, ignoring the live session file.
@@ -408,6 +492,13 @@ func (sm *SessionManager) GetAllSessions() ([]*Session, error) {
 		}
 
 		if sess != nil && sess.StartTime > 0 {
+			// A file can be replaced without changing its name or session
+			// timestamps. Expose lightweight filesystem identity so opt-in
+			// leaderboard updates can detect those replacements.
+			if info, err := file.Info(); err == nil {
+				sess.FileSize = info.Size()
+				sess.ModifiedMs = info.ModTime().UnixMilli()
+			}
 			sessions = append(sessions, sess)
 		}
 	}
@@ -442,63 +533,6 @@ func (sm *SessionManager) DeleteSession(sessionID string) error {
 	return nil
 }
 
-func updateSessionHeaderName(filePath string, newName string) error {
-	f, err := os.Open(filePath)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-
-	var lines []string
-	scanner := bufio.NewScanner(f)
-	scanner.Buffer(make([]byte, 64*1024), 32*1024*1024) // Session summaries can exceed the default 64 KiB scanner limit.
-	if scanner.Scan() {
-		firstLine := scanner.Text()
-		var summaryEvent eventSessionSummary
-		if err := json.Unmarshal([]byte(firstLine), &summaryEvent); err == nil && summaryEvent.EventId == eventIdSessionSummary {
-			var firstLineMap map[string]interface{}
-			if err := json.Unmarshal([]byte(firstLine), &firstLineMap); err == nil {
-				if summaryObj, ok := firstLineMap["summary"].(map[string]interface{}); ok {
-					summaryObj["name"] = newName
-					firstLineMap["summary"] = summaryObj
-					updatedBytes, err := json.Marshal(firstLineMap)
-					if err == nil {
-						lines = append(lines, string(updatedBytes))
-					} else {
-						lines = append(lines, firstLine)
-					}
-				} else {
-					lines = append(lines, firstLine)
-				}
-			} else {
-				lines = append(lines, firstLine)
-			}
-		} else {
-			lines = append(lines, firstLine)
-		}
-	} else {
-		return nil
-	}
-
-	for scanner.Scan() {
-		lines = append(lines, scanner.Text())
-	}
-	f.Close()
-
-	fWrite, err := os.Create(filePath)
-	if err != nil {
-		return err
-	}
-	defer fWrite.Close()
-	writer := bufio.NewWriter(fWrite)
-	for _, line := range lines {
-		if _, err := writer.WriteString(line + "\n"); err != nil {
-			return err
-		}
-	}
-	return writer.Flush()
-}
-
 // RenameSession handles renaming a session, supporting both YYYY-MM-DD_HH-MM-SS_Name.ndjson and session-<timestamp>.ndjson file formats.
 func (sm *SessionManager) RenameSession(sessionID, newName string) (*Session, error) {
 	sm.mu.Lock()
@@ -521,6 +555,17 @@ func (sm *SessionManager) RenameSession(sessionID, newName string) (*Session, er
 		newNdjsonFilename = newFilenameBase + ".ndjson"
 		newPath := filepath.Join(sm.logDirectory, newNdjsonFilename)
 
+		if dest, err := os.Stat(newPath); err == nil {
+			source, sourceErr := os.Stat(oldPath)
+			if sourceErr != nil {
+				return nil, sourceErr
+			}
+			if !os.SameFile(source, dest) {
+				return nil, fmt.Errorf("a different recording already uses that filename")
+			}
+		} else if !os.IsNotExist(err) {
+			return nil, err
+		}
 		if err := os.Rename(oldPath, newPath); err != nil {
 			return nil, fmt.Errorf("failed to rename session file: %w", err)
 		}
@@ -529,7 +574,9 @@ func (sm *SessionManager) RenameSession(sessionID, newName string) (*Session, er
 		if _, err := os.Stat(oldPcapPath); err == nil {
 			os.Rename(oldPcapPath, newPcapPath)
 		}
-		_ = updateSessionHeaderName(newPath, newName)
+		if err := updateSessionHeaderName(newPath, newName); err != nil {
+			return nil, fmt.Errorf("renamed session file but could not update its header: %w", err)
+		}
 	} else {
 		newNdjsonFilename = sessionID
 		if err := updateSessionHeaderName(oldPath, newName); err != nil {
@@ -721,6 +768,7 @@ func (sm *SessionManager) MigrateSession(sessionID string) error {
 	if err != nil {
 		return fmt.Errorf("failed to open session file: %w", err)
 	}
+	defer oldF.Close()
 
 	scanner := bufio.NewScanner(oldF)
 
@@ -740,6 +788,9 @@ func (sm *SessionManager) MigrateSession(sessionID string) error {
 		}
 	}
 
+	if err := scanner.Err(); err != nil {
+		return err
+	}
 	if summaryData.Name == "" {
 		parts := strings.SplitN(sessionID, "_", 3)
 		if len(parts) >= 3 {
@@ -750,23 +801,32 @@ func (sm *SessionManager) MigrateSession(sessionID string) error {
 		summaryData.StartTime = summary.StartTime
 	}
 
+	summaryData.RecordingID = summary.RecordingID
 	summaryData.Duration = summary.EncounterDuration
 	summaryData.TotalDamage = summary.TotalDamage
+	summaryData.HealingIncomplete = summary.HealingIncomplete
 
 	targetDamageMap := make(map[string]float32)
 
 	for _, pstat := range summary.Players {
 		summaryData.Players = append(summaryData.Players, SessionSummaryPlayer{
-			ID:              pstat.ID,
-			Name:            pstat.Name,
-			DPS:             pstat.OverallStats.DPS,
-			ArcanaName:      pstat.TalentName,
-			ArcanaIcon:      "", // Omit from disk serialization (omitempty)
-			TotalDamage:     pstat.OverallStats.TotalDamage,
-			OverallHealing:  pstat.OverallHealing,
-			HealingByTarget: pstat.HealingByTarget,
-			SkillUses:       pstat.SkillUses, // <-- Add this here to fix migrations!
+			ID:                 pstat.ID,
+			Name:               pstat.Name,
+			DPS:                pstat.OverallStats.DPS,
+			ArcanaName:         pstat.TalentName,
+			ArcanaIcon:         "", // Omit from disk serialization (omitempty)
+			TotalDamage:        pstat.OverallStats.TotalDamage,
+			OverallHealing:     pstat.OverallHealing,
+			HealingByTarget:    pstat.HealingByTarget,
+			SkillUses:          pstat.SkillUses,
+			OvershieldProvided: pstat.OvershieldProvided,
+			VeilCurrent:        pstat.VeilCurrent,
+			VeilPeak:           pstat.VeilPeak,
+			VeilDMR:            pstat.VeilDMR,
+			VeilPeakDMR:        pstat.VeilPeakDMR,
+			TotalHealing:       pstat.OverallHealing.TotalDamage,
 		})
+		summaryData.TotalHealing += pstat.OverallHealing.TotalDamage
 		for tID, tBreakdown := range pstat.DamageByTarget {
 			targetDamageMap[tID] += tBreakdown.TotalDamage
 		}
@@ -793,43 +853,46 @@ func (sm *SessionManager) MigrateSession(sessionID string) error {
 		return summaryData.Enemies[i].TotalDamage > summaryData.Enemies[j].TotalDamage
 	})
 
-	newPath := oldPath + ".tmp"
-	newF, err := os.CreateTemp(sm.logDirectory, ".midir-saving-*.tmp")
+	newF, err := os.CreateTemp(sm.logDirectory, ".midir-migrating-*.tmp")
 	if err != nil {
-		oldF.Close()
 		return fmt.Errorf("failed to create temporary migrated file: %w", err)
 	}
-
+	defer os.Remove(newF.Name())
+	defer newF.Close()
 	sumEvent := eventSessionSummary{
 		eventBase: eventBase{EventId: eventIdSessionSummary, At: time.Now().Unix(), Id: ""},
-		Type:      "SessionSummary",
-		Summary:   summaryData,
+		Type:      "SessionSummary", Summary: summaryData,
 	}
-	sumBytes, _ := json.Marshal(sumEvent)
-	newF.Write(sumBytes)
-	newF.Write([]byte("\n"))
-
-	oldF.Seek(0, 0)
-	oldScanner := bufio.NewScanner(oldF)
-	oldScanner.Buffer(make([]byte, 64*1024), 32*1024*1024) // Session summaries can exceed the default 64 KiB scanner limit.
-	isFirstLine := true
-	for oldScanner.Scan() {
-		if isFirstLine {
-			isFirstLine = false
-			if hasOldSummary {
-				continue
-			}
+	sumBytes, err := json.Marshal(sumEvent)
+	if err != nil {
+		return err
+	}
+	if _, err := newF.Write(append(sumBytes, '\n')); err != nil {
+		return err
+	}
+	if _, err := oldF.Seek(0, 0); err != nil {
+		return err
+	}
+	reader := bufio.NewReader(oldF)
+	if hasOldSummary {
+		if _, err := reader.ReadBytes('\n'); err != nil && err != io.EOF {
+			return err
 		}
-		newF.Write(oldScanner.Bytes())
-		newF.Write([]byte("\n"))
 	}
-	newF.Close()
-	oldF.Close()
-
-	if err := os.Rename(newPath, oldPath); err != nil {
-		os.Remove(newPath)
+	if _, err := io.Copy(newF, reader); err != nil {
+		return err
+	}
+	if err := newF.Sync(); err != nil {
+		return err
+	}
+	if err := newF.Close(); err != nil {
+		return err
+	}
+	if err := oldF.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(newF.Name(), oldPath); err != nil {
 		return fmt.Errorf("failed to replace old file with migrated one: %w", err)
 	}
-
 	return nil
 }

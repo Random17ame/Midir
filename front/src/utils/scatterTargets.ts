@@ -1,11 +1,11 @@
 /** Target-aware damage groups: the totals represent hits in a ONE-SECOND bucket,
  * not one cast. Absence of `targets` indicates an older un-attributed summary. */
 export interface ScatterTargetHit {
-  targetId: string; skillId: number; hitCount: number;
+  targetId: string; skillId: number; hitCount: number; petRaceId?: number; petName?: string;
   damage: number; maxDamage: number; critCount: number;
 }
 export interface ScatterSkillHit {
-  skillId: number; hitCount: number; damage: number;
+  skillId: number; hitCount: number; damage: number; petRaceId?: number; petName?: string;
   maxDamage: number; critCount: number;
 }
 export interface ScatterGroup {
@@ -23,10 +23,11 @@ export function filterScatterGroup(group: ScatterGroup, memberIds: ReadonlySet<s
   if (!hasTargetAttribution(group)) return null;
   const hits = (group.targets || []).filter(h => memberIds.has(String(h.targetId)));
   if (!hits.length) return null;
-  const skills = new Map<number, ScatterSkillHit>();
+  const skills = new Map<string, ScatterSkillHit>();
   for (const h of hits) {
-    const old = skills.get(h.skillId);
-    if (!old) skills.set(h.skillId, {skillId: h.skillId, hitCount: h.hitCount, damage: h.damage,
+    const key = `${h.skillId}:${h.petRaceId || 0}`;
+    const old = skills.get(key);
+    if (!old) skills.set(key, {skillId: h.skillId, petRaceId: h.petRaceId, petName: h.petName, hitCount: h.hitCount, damage: h.damage,
       critCount: h.critCount, maxDamage: h.maxDamage});
     else {
       old.hitCount += h.hitCount; old.damage += h.damage;

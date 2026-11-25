@@ -1,0 +1,33 @@
+const assert = require('node:assert/strict');
+const ts = require('typescript');
+const fs = require('node:fs');
+const vm = require('node:vm');
+const path = require('node:path');
+const file=path.resolve(__dirname,'../src/utils/minimalistMode.ts');
+const m={exports:{}};
+vm.runInNewContext(ts.transpileModule(fs.readFileSync(file,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS}}).outputText,{module:m,exports:m.exports});
+const {normalizeLiveFlags,isLiveChartPaused,isHealingAvailable}=m.exports;
+const live={minimalistMode:true,liveChartPaused:true,liveCompact:true,healingIncomplete:true};
+assert.equal(isLiveChartPaused(live,'live'),true);
+assert.equal(isLiveChartPaused(live,'saved.ndjson'),false);
+assert.equal(isHealingAvailable(live,'live'),false);
+assert.equal(isHealingAvailable({...live,minimalistMode:false},'saved.ndjson'),false);
+const legacy={}; normalizeLiveFlags(legacy); Object.assign(live,legacy);
+assert.equal(isLiveChartPaused(live,'live'),false);
+assert.equal(isHealingAvailable(live,'saved.ndjson'),true);
+assert.equal(live.liveCompact,false);
+assert.equal(isHealingAvailable({minimalistMode:true},'live'),false);
+assert.equal(isHealingAvailable({minimalistMode:true},'saved.ndjson'),true);
+console.log('Minimalist live/saved flag isolation and incomplete-healing safeguards passed');
+
+// The preference is available directly under Capture, outside its submit form.
+const settings=fs.readFileSync(path.resolve(__dirname,'../src/components/SettingsView.vue'),'utf8');
+const capture=settings.match(/<v-window-item value="capture">([\s\S]*?)<\/v-window-item>/)?.[1];
+assert(capture, 'Capture settings pane exists');
+assert(!settings.includes('value="performance"'), 'No obsolete Performance tab or pane');
+assert.equal((settings.match(/label="Enable Minimalist Mode"/g)||[]).length,1);
+assert(capture.includes('label="Enable Minimalist Mode"'));
+assert(capture.indexOf('</v-form>') < capture.indexOf('label="Enable Minimalist Mode"'));
+assert(capture.includes('@update:model-value="updateMinimalistMode"'));
+assert(capture.includes('No capture restart is required.'));
+console.log('Minimalist toggle is in Capture, separate from the capture submit form');

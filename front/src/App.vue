@@ -48,6 +48,17 @@
           </v-btn>
 
           <v-btn
+            variant="text"
+            size="small"
+            prepend-icon="mdi-trophy-outline"
+            class="action-btn"
+            @click="activeTool = 'records'"
+            title="Personal Bests and Arcana burst leaderboards"
+          >
+            Bests
+          </v-btn>
+
+          <v-btn
             icon="mdi-cog"
             variant="text"
             size="small"
@@ -56,7 +67,7 @@
           ></v-btn>
         </template>
 
-        <template v-else-if="activeTool === 'settings'">
+        <template v-else-if="activeTool === 'settings' || activeTool === 'records'">
           <v-btn
             variant="tonal"
             size="small"
@@ -74,6 +85,7 @@
     <v-main>
       <damage-meter-view v-if="activeTool === 'dps'" />
       <settings-view v-else-if="activeTool === 'settings'" />
+      <personal-bests-view v-else-if="activeTool === 'records'" />
     </v-main>
 
     <v-snackbar
@@ -137,7 +149,8 @@
           Save Live Session
         </v-card-title>
         <v-card-text class="pt-2 px-6 pb-4 text-grey-lighten-1">
-          Please enter a descriptive name for this live session to save it to your history.
+          Please enter a descriptive name for this live session to save it to your history. Suggested names use observed combat participants and boss progress, not a confirmed party roster or wipe.
+          <v-alert v-if="saveNameWarning" type="warning" variant="tonal" density="compact" class="mt-3">{{ saveNameWarning }}</v-alert>
           <v-text-field
             ref="saveSessionInput"
             v-model="saveSessionName"
@@ -177,13 +190,17 @@
 </template>
 
 <script lang="ts">
-import { defineComponent, onMounted, onUnmounted, inject, ref, watch, computed, provide, reactive, nextTick } from "vue";
+import { defineComponent, defineAsyncComponent, onMounted, onUnmounted, inject, ref, watch, computed, provide, reactive, nextTick } from "vue";
 import { socket } from "@/store"; // Static import
 import { FightSummary } from "./protocols";
 import { CONDITION_COMBINATIONS } from "@/conditionCombinations";
 import { initPlayerCache } from "@/playerCache";
+import { PET_DAMAGE_SKILL_ID, PET_DAMAGE_SKILL_LABEL } from "@/utils/petLabels";
+import { suggestSessionSaveName } from "@/utils/sessionSaveNaming";
+import { needsRunNumber, formatSessionName, nextRunNumber, normalizeSessionNamePreferences, recordingLocalDate } from "@/utils/sessionNameFormat";
 import DamageMeterView from "@/components/DamageMeterView.vue";
 import SettingsView from "@/components/SettingsView.vue";
+import { normalizeLiveFlags } from "@/utils/minimalistMode";
 import {
   getSessionSummary,
   getSessions,
@@ -203,13 +220,20 @@ import {
   activeTool,
   loadingCount,
   isLoading,
+  sessions,
+  pendingSessionSave,
+  sessionNamePreferences,
 } from "@/store";
+
+// Lazy-load the records page: the normal meter never evaluates it.
+const PersonalBestsView = defineAsyncComponent(() => import("@/components/PersonalBestsView.vue"));
 
 export default defineComponent({
   name: "App",
   components: {
     DamageMeterView,
     SettingsView,
+    PersonalBestsView,
   },
   setup() {
     const raceNameMap = inject("raceNameMap");
@@ -219,8 +243,6 @@ export default defineComponent({
     
     provide("playerBatchUpdateEvent", playerBatchUpdateEvent);
     
-    const appEvent = inject("appEvent");
-
     const socketConnected = ref(false);
 
     // Socket is now statically imported
@@ -232,6 +254,7 @@ export default defineComponent({
       summary.damageTaken = summary.damageTaken || {};
       summary.graphData = summary.graphData || {};
       summary.currentEntities = summary.currentEntities || [];
+      normalizeLiveFlags(summary);
       Object.assign(fightSummary, summary);
     };
     
@@ -256,8 +279,12 @@ export default defineComponent({
       // Clear the backend first: an API failure must never erase the only
       // remaining live data from the UI.
       await clearBackendState();
+      if (activeSessionId.value !== "live") return;
       selectedTargetId.value = "";
       Object.assign(fightSummary, {
+        liveChartPaused: false,
+        liveCompact: false,
+        healingIncomplete: fightSummary.minimalistMode === true,
         encounterDuration: 0,
         totalDamage: 0,
         players: {},
@@ -283,10 +310,42 @@ export default defineComponent({
 
     const saveDialogVisible = ref(false);
     const saveSessionName = ref("");
+    const saveNameWarning = ref("");
     const saveSessionInput = ref<any>(null);
 
-    const triggerSaveSession = () => {
-      saveSessionName.value = `Session @ ${new Date().toLocaleTimeString()}`;
+    let preparingSaveName = false;
+    const triggerSaveSession = async () => {
+      if (preparingSaveName || isSaving.value || saveDialogVisible.value) return;
+      preparingSaveName = true;
+      saveNameWarning.value = "";
+      const preferences = normalizeSessionNamePreferences(sessionNamePreferences.value);
+      let date = recordingLocalDate();
+      let encounter = "Session";
+      let run: number | undefined;
+      try {
+        // The save API always saves the live recording, never the historical
+        // session currently displayed in the meter.
+        const live = activeSessionId.value === "live" && !fightSummary.liveCompact && !fightSummary.minimalistMode ? fightSummary : await getLiveSummary();
+        date = recordingLocalDate(live.startTime, date);
+        encounter = suggestSessionSaveName(live, "Session");
+      } catch (e) {
+        console.warn("Unable to suggest live session name:", e);
+        saveNameWarning.value = "Live encounter details were unavailable; using the current local date and time.";
+      }
+      try {
+        if (needsRunNumber(preferences, date)) {
+          // Refresh existing saved-session metadata only on demand. Never read
+          // detailed combat logs or use mutable titles to determine the count.
+          run = nextRunNumber(date, await getSessions(), preferences);
+        }
+      } catch (e) {
+        console.warn("Unable to determine run number:", e);
+        saveNameWarning.value = [saveNameWarning.value, "Run number unavailable; please enter it manually if needed."].filter(Boolean).join(" ");
+      } finally {
+        preparingSaveName = false;
+      }
+      const suggested = formatSessionName(encounter, date, preferences, run);
+      saveSessionName.value = suggested;
       saveDialogVisible.value = true;
       nextTick(() => {
         const input = saveSessionInput.value?.$el?.querySelector("input");
@@ -298,46 +357,53 @@ export default defineComponent({
     };
 
     const confirmSaveSession = async () => {
-      if (isSaving.value) return; // Enter and click must not submit twice.
+      if (isSaving.value) return; // Prevent duplicate submissions.
       const name = saveSessionName.value.trim();
       if (!name) return;
 
       isSaving.value = true;
+      saveDialogVisible.value = false;
+      pendingSessionSave.value = { name, startedAt: Date.now() };
+      // Give Vue and the browser an opportunity to paint the pending session
+      // before starting potentially expensive backend serialization.
+      await nextTick();
+      await new Promise<void>(resolve => setTimeout(resolve, 0));
       try {
-        // Session saves are destructive to the live backend. Verify the newly
-        // created archive is discoverable before clearing the live graph.
-        const before = await getSessions();
-        const previousIds = new Set(before.map((session) => session.id));
-        await saveSession(name);
-        const after = await getSessions();
-        const saved = after.find((session) => !previousIds.has(session.id) && session.name === name);
-        if (!saved) {
-          throw new Error("Save request completed, but the new session is not visible in session history. Live display was not cleared; check the sessions folder before retrying.");
+        // Save returns only after the temporary NDJSON has been completely
+        // written and atomically published. No expensive history scans needed.
+        const saved = await saveSession(name);
+        if (!saved?.id || saved.name !== name || !saved.id.endsWith(".ndjson")) {
+          throw new Error("Save response did not identify a completed session. Check the sessions folder before retrying.");
         }
+        sessions.value = [saved, ...sessions.value.filter(s => s.id !== saved.id)]
+          .sort((a, b) => b.startTime - a.startTime);
+        pendingSessionSave.value = null;
+        // Preserve the existing safety rule: never erase live display state
+        // until the backend has confirmed the session was saved.
         await clearSession();
-        saveDialogVisible.value = false;
-        appEvent.value.dispatchEvent(new CustomEvent("refresh-sessions"));
-        alert(`Session "${name}" saved successfully.`);
       } catch (e) {
-        console.error("Failed to save or verify session:", e);
+        console.error("Failed to save or finalize session:", e);
         alert(`Unable to confirm session saved: ${e}`);
       } finally {
+        pendingSessionSave.value = null;
         isSaving.value = false;
       }
     };
 
+    let sessionLoadGeneration = 0;
     watch(
       activeSessionId,
       async (newId) => {
+        const generation = ++sessionLoadGeneration;
         console.log(`Active session changed to: ${newId}`);
 
         selectedTargetId.value = "";
         if (newId === "live") {
-          socket.onSummary = handleSummary;
+          socket.onSummary = summary => { if (activeSessionId.value === "live") handleSummary(summary); };
           try {
             if (loadingCount) loadingCount.value++;
             const summary = await getLiveSummary();
-            handleSummary(summary);
+            if (generation === sessionLoadGeneration && activeSessionId.value === newId) handleSummary(summary);
           } catch (e) {
             console.error("Failed to load live summary:", e);
             alert(`Error loading live summary: ${e}`);
@@ -349,7 +415,7 @@ export default defineComponent({
           try {
             if (loadingCount) loadingCount.value++;
             const summary = await getSessionSummary(newId);
-            handleSummary(summary);
+            if (generation === sessionLoadGeneration && activeSessionId.value === newId) handleSummary(summary);
           } catch (e) {
             console.error("Failed to load session summary:", e);
             alert(`Error loading session: ${e}`);
@@ -428,6 +494,12 @@ export default defineComponent({
           }
         }
 
+        // Skill 9999 is Midir's synthetic category for pet-attributed damage,
+        // not a numbered game skill. Respect user-provided skill-name overrides.
+        if (!skillNameMap.value[PET_DAMAGE_SKILL_ID]?.name) {
+          skillNameMap.value[PET_DAMAGE_SKILL_ID] = { name: PET_DAMAGE_SKILL_LABEL, iconUrl: "" };
+        }
+
         // Register virtual combined conditions
         for (const combo of CONDITION_COMBINATIONS) {
           const baseCond = condNameMap.value[combo.iconId];
@@ -459,6 +531,7 @@ export default defineComponent({
       clearDialogVisible,
       saveDialogVisible,
       saveSessionName,
+      saveNameWarning,
       saveSessionInput,
       triggerClearSession,
       confirmClearSession,

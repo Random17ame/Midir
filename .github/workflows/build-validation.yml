@@ -43,6 +43,9 @@ jobs:
       - name: Install and synchronize patched frontend dependencies
         working-directory: front
         run: npm install --no-fund
+      - name: Frontend behavior regressions
+        working-directory: front
+        run: npm test
       - name: Frontend typecheck
         working-directory: front
         run: npm run typecheck

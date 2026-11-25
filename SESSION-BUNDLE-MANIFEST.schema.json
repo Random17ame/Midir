@@ -1,0 +1,175 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Midir session bundle manifest v1",
+  "description": "Offline ZIP metadata. Validate counts, exact paths, scope, digest and payload agreement separately. No network lookup is needed; use a local JSON Schema validator.",
+  "type": "object",
+  "required": [
+    "format",
+    "schemaVersion",
+    "exporterVersion",
+    "createdAt",
+    "sessionCount",
+    "sessions"
+  ],
+  "properties": {
+    "format": {
+      "const": "midir-session-bundle"
+    },
+    "schemaVersion": {
+      "const": 1
+    },
+    "exporterVersion": {
+      "type": "string",
+      "minLength": 1
+    },
+    "createdAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "sessionCount": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 65533
+    },
+    "sessions": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 65533,
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "path",
+          "type",
+          "payloadFormat",
+          "dataSchemaVersion",
+          "dataSchemas",
+          "startAt",
+          "endAt",
+          "scope",
+          "healingIncomplete"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^(recording-[0-9a-f]{32}|legacy-sha256-[0-9a-f]{64})$"
+          },
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Exact relative UTF-8 ZIP path; consumer separately checks traversal, collisions, membership and extension."
+          },
+          "type": {
+            "const": "combat-session"
+          },
+          "payloadFormat": {
+            "enum": [
+              "html-report",
+              "report-json"
+            ]
+          },
+          "dataSchemaVersion": {
+            "const": 1
+          },
+          "dataSchemas": {
+            "type": "object",
+            "required": [
+              "companion",
+              "skillObservation",
+              "damageHit",
+              "skillUse",
+              "encounter"
+            ],
+            "properties": {
+              "companion": {
+                "const": 1
+              },
+              "skillObservation": {
+                "const": 1
+              },
+              "damageHit": {
+                "const": 1
+              },
+              "skillUse": {
+                "const": 1
+              },
+              "encounter": {
+                "const": 1
+              }
+            }
+          },
+          "startAt": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "endAt": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "scope": {
+            "type": "object",
+            "required": [
+              "playerId",
+              "targetId",
+              "targetEntityIds"
+            ],
+            "properties": {
+              "playerId": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "targetId": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "targetEntityIds": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "uniqueItems": true
+              }
+            }
+          },
+          "healingIncomplete": {
+            "type": "boolean"
+          },
+          "payloadSha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "fileSha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          }
+        },
+        "dependentRequired": {
+          "payloadSha256": [
+            "fileSha256"
+          ],
+          "fileSha256": [
+            "payloadSha256"
+          ]
+        }
+      }
+    }
+  }
+}

@@ -18,6 +18,15 @@ for (const entry of Object.values(talentData.arcanas)) {
 // Lookup by exact skill ID; shared by the live meter and self-contained export.
 // The color is resolved at rendering/export time so Appearance changes apply
 // without changing the saved combat data or the authoritative skill mapping.
+/** All currently cataloged Arcanas, with colors from Appearance Settings. */
+export function listArcanaIdentities(): ArcanaIdentity[] {
+  const unique = new Map<string, ArcanaIdentity>();
+  for (const arcana of skillArcana.values()) {
+    if (!unique.has(arcana.name)) unique.set(arcana.name, { ...arcana, color: getClassColor(arcana.name, arcana.color) });
+  }
+  return [...unique.values()].sort((a, b) => a.name.localeCompare(b.name));
+}
+
 export function getSkillArcana(skillId: number): ArcanaIdentity | undefined {
   const arcana = skillArcana.get(Number(skillId));
   return arcana ? { ...arcana, color: getClassColor(arcana.name, arcana.color) } : undefined;
@@ -64,6 +73,16 @@ function chronologicalSkillIds(player: PlayerStats): number[] {
   return observed.map(event => event.id);
 }
 
+// Both in-app target selection and boss-only exports use the same evidence:
+// target-scoped recorded damage plus explicitly attributed skill observations.
+function resolveArcanaForTargetIds(player: PlayerStats, ids: string[]): ArcanaResolution {
+  const members = new Set(ids);
+  const uses = (player.skillActivations || [])
+    .filter(use => use.targetId && members.has(String(use.targetId)))
+    .map(use => Number(use.skillId));
+  return classify([...skillIds(ids.map(id => player.damageByTarget?.[id])), ...uses]);
+}
+
 // `targetId` is the exact selector scope (including reconstructed folder/level).
 // A saved target breakdown is more robust than inferring a change from session order.
 export function resolvePlayerArcana(player: PlayerStats, summary: FightSummary, targetId = ''): ArcanaResolution {
@@ -73,10 +92,7 @@ export function resolvePlayerArcana(player: PlayerStats, summary: FightSummary, 
   ]);
   const members = getGroupMemberTargetIds(targetId, summary);
   const ids = members.length ? members : summary.targets[targetId] ? [targetId] : [];
-  const scopedUses = (player.skillActivations || [])
-    .filter(use => use.targetId && ids.includes(String(use.targetId)))
-    .map(use => Number(use.skillId));
-  return classify([...skillIds(ids.map(id => player.damageByTarget?.[id])), ...scopedUses]);
+  return resolveArcanaForTargetIds(player, ids);
 }
 
 // Portable report's all-target encounter windows require timestamp evidence.
@@ -94,9 +110,7 @@ export function resolvePlayerArcanaWindow(player: PlayerStats, startUnix: number
 
 // Exact report boss-entity scope (not a guessed interval).
 export function resolvePlayerArcanaForIds(player: PlayerStats, ids: string[]): ArcanaResolution {
-  const uses = (player.skillActivations || []).filter(use => use.targetId && ids.includes(String(use.targetId)))
-    .map(use => Number(use.skillId));
-  return classify([...skillIds(ids.map(id => player.damageByTarget?.[id])), ...uses]);
+  return resolveArcanaForTargetIds(player, ids);
 }
 
 // The length of the painted portion is independent of Arcana count. Mixed

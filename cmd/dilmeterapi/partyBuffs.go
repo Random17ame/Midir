@@ -39,7 +39,7 @@ func ParseMabinogiMetadata(metadata string) map[string]float32 {
 	return result
 }
 
-// computePartyBuffs processes the players' conditions in FightSummary to extract 
+// computePartyBuffs processes the players' conditions in FightSummary to extract
 // high-level party buff metrics (BFO, Vivace) for the dashboard.
 func computePartyBuffs(summary *FightSummary) {
 	ids := []uint32{680, 192} // 680 = BFO, 192 = Vivace
@@ -58,11 +58,11 @@ func computePartyBuffs(summary *FightSummary) {
 		}
 
 		type metricData struct {
-			highest         float32
-			highestUptime   float32
-			sumVDGlobal     float64
-			sumDGlobal      float64
-			maxUptimeParty  float32
+			highest        float32
+			highestUptime  float32
+			sumVDGlobal    float64
+			sumDGlobal     float64
+			maxUptimeParty float32
 		}
 
 		metrics := make(map[string]*metricData)

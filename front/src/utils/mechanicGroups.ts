@@ -81,7 +81,7 @@ export function findMechanicGroups(targets: Record<string,TargetStats>): Mechani
       }
       return null;
     };
-    const starts={80:phaseStart(80),40:phaseStart(40)};
+    const starts={80:phaseStart(80),60:phaseStart(60),40:phaseStart(40)};
     const buckets: Record<'80'|'60'|'40',typeof halos>={'80':[],'60':[],'40':[]};
     const hpFamily=(target:TargetStats):number|null=>{
       // A spawn can initially carry placeholder HP, so use the most frequently
@@ -94,14 +94,18 @@ export function findMechanicGroups(targets: Record<string,TargetStats>): Mechani
     };
     for(const member of halos){
       const hp=hpFamily(member[1]);
-      if(hp===63800000){buckets['60'].push(member);continue;}
+      if(hp===63800000){
+        const at=Number(member[1].startTime);
+        if((starts[60]===null || at>=starts[60]-5) && (starts[40]===null || at<starts[40])) buckets['60'].push(member);
+        continue;
+      }
       if(hp!==38300000)continue; // Ambient 23M Shards never become mechanic halos.
       const at=Number(member[1].startTime);
       const candidates=([80,40] as const).filter(phase=>{
         const start=starts[phase];
         // A little pre-spawn packet skew is expected. Cap association time to
         // avoid swallowing unrelated later spawns when a phase can't be bounded.
-        const next=phase===80 ? starts[40] ?? Infinity : Infinity;
+        const next=phase===80 ? (starts[60] ?? starts[40] ?? Infinity) : Infinity;
         return start!==null && at>=start-5 && at<Math.min(start+100,next);
       });
       if(candidates.length===1)buckets[String(candidates[0]) as '80'|'40'].push(member);

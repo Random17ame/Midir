@@ -19,7 +19,7 @@ export async function getSessions(): Promise<Session[]> {
 export async function getSessionSummary(
   sessionId: string
 ): Promise<FightSummary> {
-  return httpCall<FightSummary>(`/api/sessions/${sessionId}/summary`);
+  return httpCall<FightSummary>(`/api/sessions/${encodeURIComponent(sessionId)}/summary`);
 }
 
 // Read-only comparison history; a blank directory uses ordinary saved sessions.
@@ -47,8 +47,8 @@ export async function startSession(): Promise<Session> {
   return httpCall<Session>("/api/sessions/start", { method: "POST" });
 }
 
-export async function saveSession(newName: string): Promise<void> {
-  await fetchWithOpts("/api/sessions/save", {
+export async function saveSession(newName: string): Promise<Session> {
+  return httpCall<Session>("/api/sessions/save", {
     method: "POST",
     body: JSON.stringify({ name: newName }),
     headers: { "Content-Type": "application/json" },
@@ -98,6 +98,17 @@ export async function clearBackendState(): Promise<void> {
 
 export async function getLiveSummary(): Promise<FightSummary> {
   return httpCall<FightSummary>("/api/state/summary");
+}
+
+export async function getMinimalistMode(): Promise<{ enabled: boolean }> {
+  return httpCall<{ enabled: boolean }>("/api/state/minimalist", { disableLoading: true });
+}
+
+export async function setMinimalistMode(enabled: boolean): Promise<{ enabled: boolean }> {
+  return httpCall<{ enabled: boolean }>("/api/state/minimalist", {
+    method: "PUT", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ enabled }), disableLoading: true,
+  });
 }
 
 // --- EMBEDDED DATA API FUNCTIONS ---

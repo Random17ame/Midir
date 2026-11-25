@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"net/http"
 
 	"github.com/Marcentus/Midir/packet"
@@ -13,13 +14,32 @@ func stateRouter(pub *eventPublisher, sm *SessionManager) http.Handler {
 	// CORRECTED: Pass the SessionManager to the handler.
 	r.Post("/clear", handleClearState(pub, sm))
 	r.Get("/summary", handleGetLiveSummary(pub))
+	// This preference is independent of capture setup: toggling never changes NIC,
+	// promiscuous mode, capture filters, or the current recording's evidence.
+	r.Get("/minimalist", func(w http.ResponseWriter, r *http.Request) {
+		respondWithJSON(w, http.StatusOK, minimalistPreference{Enabled: pub.aggregator.minimalistMode.Load()})
+	})
+	r.Put("/minimalist", func(w http.ResponseWriter, r *http.Request) {
+		var payload struct {
+			Enabled *bool `json:"enabled"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil || payload.Enabled == nil {
+			respondWithError(w, http.StatusBadRequest, "Expected enabled boolean")
+			return
+		}
+		if err := pub.updateMinimalistMode(*payload.Enabled); err != nil {
+			respondWithError(w, http.StatusInternalServerError, "Unable to save Minimalist Mode setting: "+err.Error())
+			return
+		}
+		respondWithJSON(w, http.StatusOK, minimalistPreference{Enabled: *payload.Enabled})
+	})
 
 	return r
 }
 
 func handleGetLiveSummary(pub *eventPublisher) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		summary := pub.aggregator.GetSummary()
+		summary := pub.liveSummary(false)
 		respondWithJSON(w, http.StatusOK, summary)
 	}
 }

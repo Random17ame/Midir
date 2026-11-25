@@ -119,6 +119,7 @@
 <script lang="ts" setup>
 import { inject, ref, computed } from "vue";
 import { getMabiNameColor } from "@/util";
+import { PET_DAMAGE_SKILL_ID, PET_DAMAGE_SKILL_LABEL } from "@/utils/petLabels";
 import { fightSummary, hiddenPlayers } from "@/store";
 import { PlayerDamageTakenStats, DamageTakenDetails } from "@/protocols";
 
@@ -144,7 +145,7 @@ const formatNumber = (num: number | undefined | null): string => {
 // REMOVED formatDuration and formattedEncounterDuration computed property
 
 const getSkillName = (skillId: number): string => {
-  if (skillId === 9999) return "Pets";
+  if (skillId === PET_DAMAGE_SKILL_ID) return PET_DAMAGE_SKILL_LABEL;
   return skillNameMap.value[skillId]?.name || `Unknown Skill: ${skillId}`;
 };
 

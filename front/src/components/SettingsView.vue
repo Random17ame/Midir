@@ -18,7 +18,7 @@
           <v-window-item value="experimental">
             <v-card variant="outlined" class="pa-4">
               <div class="text-h6 mb-2">Experimental features</div>
-              <v-switch v-model="showHealingTab" color="primary" label="Show Healing Done tab" hint="Healing attribution and overshield statistics are still under investigation. Hidden by default; saved healing data is never deleted." persistent-hint />
+              <v-switch v-model="showHealingTab" color="primary" label="Show Healing Done tab" hint="Healing attribution and overshield statistics are still under investigation. Hidden by default; saved healing data is never deleted. Minimalist Mode disables new healing recording." persistent-hint />
 
             </v-card>
           </v-window-item>
@@ -205,7 +205,18 @@
               </v-card-text>
             </v-card>
 
-            <!-- CARD 2: SYSTEM DIAGNOSTICS & TELEMETRY -->
+            <!-- CARD 2: MINIMALIST MODE (applies immediately, independent of the capture form) -->
+            <v-card variant="outlined" class="pa-4 mb-4">
+              <div class="text-h6 mb-2">Minimalist Mode</div>
+              <v-switch :model-value="minimalistEnabled" @update:model-value="updateMinimalistMode"
+                :disabled="!minimalistLoaded || minimalistBusy" :loading="minimalistBusy" color="primary"
+                label="Enable Minimalist Mode" hide-details />
+              <p class="text-body-2 text-medium-emphasis mt-2">Pause live charts during combat and reduce live hit-history updates. Damage and skill evidence remain available for saved-session analysis and exports.</p>
+              <p class="text-caption text-medium-emphasis mt-2">Healing Done and shield attribution are not recorded while enabled. Changing this mid-session marks healing data incomplete. No capture restart is required.</p>
+              <v-alert v-if="minimalistError" type="warning" variant="tonal" density="compact" class="mt-3">{{ minimalistError }}</v-alert>
+            </v-card>
+
+            <!-- CARD 3: SYSTEM DIAGNOSTICS & TELEMETRY -->
             <v-card variant="outlined" class="mb-4" style="border-color: rgba(140, 158, 255, 0.25) !important;">
               <v-card-item class="pb-1 pt-2">
                 <div class="d-flex align-center justify-space-between w-100 flex-wrap">
@@ -398,6 +409,66 @@
             <ColorSettings />
             <v-divider class="my-4"></v-divider>
             <ClassColorSettings />
+            <v-divider class="my-4" />
+            <v-card variant="outlined" class="pa-4 mb-4">
+              <div class="text-h6 mb-2">Session Naming</div>
+              <div class="text-body-2 text-medium-emphasis">Customize editable names suggested when saving live sessions. Uses the local recording start date and time.</div>
+              <v-switch v-model="sessionNamePreferences.includeDate" color="primary" label="Include date in default name" hide-details />
+              <v-switch v-model="sessionNamePreferences.includeTime" color="primary" label="Include time in default name" hide-details />
+              <v-switch v-model="sessionNamePreferences.includeRun" color="primary" label="Include run count in default name" hide-details />
+              <div class="mt-3"><RunCountSettings :rule="sessionNamePreferences.count" /></div>
+              <div class="text-caption text-medium-emphasis mb-3">Default example: {{ defaultNamingPreview }}</div>
+              <v-divider class="mb-3" />
+              <div class="text-h6 mb-2">Group Run Scheduler</div>
+              <p class="text-body-2 text-medium-emphasis mb-3">Assign a label and naming template to recurring local run times. First matching enabled schedule wins; drag-free priority controls move rules up or down. Scheduled templates override general naming switches.</p>
+              <div v-for="(group, index) in sessionNamePreferences.schedules" :key="index" class="mb-3">
+                <v-card variant="outlined" class="pa-3">
+                  <div class="d-flex align-center flex-wrap ga-2 mb-2">
+                    <span class="text-subtitle-2">{{ index + 1 }}. {{ group.label || 'New group' }}</span>
+                    <v-spacer />
+                    <v-btn icon="mdi-chevron-up" size="small" variant="text" aria-label="Move schedule up" :disabled="index === 0" @click="moveGroup(index, -1)" />
+                    <v-btn icon="mdi-chevron-down" size="small" variant="text" aria-label="Move schedule down" :disabled="index === sessionNamePreferences.schedules.length - 1" @click="moveGroup(index, 1)" />
+                    <v-btn icon="mdi-delete-outline" size="small" variant="text" aria-label="Remove schedule" @click="sessionNamePreferences.schedules.splice(index, 1)" />
+                  </div>
+                  <v-switch v-model="group.enabled" label="Enabled" color="primary" hide-details density="compact" />
+                  <v-text-field v-model="group.label" label="Group label" placeholder="Friends Group, Company Team, Sports Club…" variant="outlined" density="compact" hide-details class="mt-2" />
+                  <div class="text-caption mt-3 mb-1">Start days</div>
+                  <v-btn-toggle v-model="group.days" multiple color="primary" variant="outlined" density="compact" class="flex-wrap" style="height: auto; max-width: 100%;">
+                    <v-btn v-for="(day, dayIndex) in namingWeekdays" :key="day" :value="dayIndex" size="small">{{ day.slice(0, 3) }}</v-btn>
+                  </v-btn-toggle>
+                  <v-row dense class="mt-3">
+                    <v-col cols="12" sm="6"><v-text-field v-model="group.start" type="time" label="Start (local)" variant="outlined" density="compact" hide-details /></v-col>
+                    <v-col cols="12" sm="6"><v-text-field v-model="group.end" type="time" label="End (local)" variant="outlined" density="compact" hide-details /></v-col>
+                  </v-row>
+                  <p class="text-caption text-medium-emphasis mb-3">{{ group.start === group.end ? 'Equal times mean a full 24-hour window.' : group.end < group.start ? 'Continues into the following day.' : 'Ends on the same day.' }}</p>
+                  <v-text-field v-model="group.template" label="Naming template" variant="outlined" density="compact" hide-details />
+                  <div class="text-caption text-medium-emphasis my-2">Tokens: <code>{encounter}</code> <code>{label}</code> <code>{weekday}</code> <code>{run}</code> <code>{date}</code> <code>{time}</code></div>
+                  <RunCountSettings :rule="group.count" allow-scheduled />
+                  <v-alert v-if="!validGroupSchedule(group)" type="warning" variant="tonal" density="compact" class="mt-2">Enter a label, at least one start day, valid times and a valid template before this rule can match.</v-alert>
+                  <div v-else class="text-caption text-medium-emphasis mt-2" style="overflow-wrap: anywhere;">Example (run 1): {{ groupPreview(group) }}</div>
+                </v-card>
+              </div>
+              <v-btn variant="outlined" size="small" prepend-icon="mdi-plus" @click="sessionNamePreferences.schedules.push(newGroupSchedule())">Add group schedule</v-btn>
+              <p class="text-caption text-medium-emphasis mt-3 mb-3">Group counts include only saved recordings assigned to that group by the current schedule rules. Weekly counts can span multiple scheduled evenings. A scheduled-window count resets for each start-day window. Rolling counts can decrease as older recordings expire. Deleting sessions can reuse numbers.</p>
+              <v-divider class="mb-3" />
+              <v-switch v-model="sessionNamePreferences.customEnabled" color="primary" label="Enable fallback custom naming template" hide-details />
+              <div v-if="sessionNamePreferences.customEnabled" class="mt-3">
+                <v-text-field v-model="sessionNamePreferences.template" label="Naming template" variant="outlined" density="comfortable"
+                  :error="!namingTemplateValid" :error-messages="namingTemplateValid ? [] : ['Use a nonempty template with recognized tokens only. Default naming will be used until corrected.']" />
+                <div class="text-caption text-medium-emphasis mb-3">Tokens: <code>{encounter}</code> <code>{label}</code> <code>{weekday}</code> <code>{run}</code> <code>{date}</code> <code>{time}</code>. Type any literal text as well. Custom templates use their explicit date/time tokens instead of the default switches.</div>
+                <v-switch v-model="sessionNamePreferences.applyEveryDay" color="primary" label="Apply template on days without a label" hide-details class="mb-3" />
+                <div class="text-subtitle-2 mb-2">Custom weekday labels</div>
+                <div class="text-caption text-medium-emphasis mb-3">Each day can have any label, such as Friends Group, Company Team or Sports Club. Blank days use the default format unless the option above is enabled.</div>
+                <v-row v-for="(day, index) in namingWeekdays" :key="day" dense align="center" class="mb-1">
+                  <v-col cols="12" sm="5">
+                    <v-text-field v-model="sessionNamePreferences.labels[index]" :label="day" placeholder="No label" variant="outlined" density="compact" hide-details />
+                  </v-col>
+                  <v-col cols="12" sm="7" class="text-caption text-medium-emphasis" style="overflow-wrap: anywhere;">{{ namingPreviews[index] }}</v-col>
+                </v-row>
+                <p class="text-caption text-medium-emphasis mt-3">Preview uses sample Bri 4p recordings and run 1. Fallback templates use the general counting period. Deleting a recording can reuse a number; cancelling the dialog does not reserve a number.</p>
+                <v-btn variant="text" size="small" class="mt-2" @click="resetNamingTemplate">Reset template</v-btn>
+              </div>
+            </v-card>
           </v-window-item>
         </v-window>
       </v-card-text>
@@ -526,19 +597,58 @@
 <!-- Settings include Personal Best search limits/folder and experimental Healing visibility. -->
 <script lang="ts">
 import { defineComponent, computed, ref, onMounted, onUnmounted } from "vue";
-import { showClassColorsForVisiblePlayers, dpsMeterFillMode, socket, fightSummary, personalBestSessionLimit, personalBestHistoryFolder, showHealingTab } from "@/store";
-import { pickPersonalBestHistoryFolder } from "@/apicall";
+import { showClassColorsForVisiblePlayers, dpsMeterFillMode, socket, fightSummary, personalBestSessionLimit, personalBestHistoryFolder, showHealingTab, sessionNamePreferences } from "@/store";
+import { defaultNameTemplate, formatSessionName, namingWeekdays, normalizeSessionNamePreferences, validSessionNameTemplate, newGroupSchedule, validGroupSchedule, type GroupSchedule } from "@/utils/sessionNameFormat";
+import { pickPersonalBestHistoryFolder, getMinimalistMode, setMinimalistMode } from "@/apicall";
 import ColorSettings from "./ColorSettings.vue";
 import ClassColorSettings from "./ClassColorSettings.vue";
+import RunCountSettings from "./RunCountSettings.vue";
 
 export default defineComponent({
   name: "SettingsView",
   components: {
     ColorSettings,
     ClassColorSettings,
+    RunCountSettings,
   },
   setup() {
     const activeTab = ref("capture");
+    const namingPreferences = computed(() => normalizeSessionNamePreferences(sessionNamePreferences.value));
+    const namingTemplateValid = computed(() => validSessionNameTemplate(namingPreferences.value.template));
+    const defaultNamingPreview = computed(() => formatSessionName("Bri 4p", new Date(2027, 0, 11, 19, 30), { ...namingPreferences.value, customEnabled: false, schedules: [] }, 1));
+    const namingPreviews = computed(() => namingWeekdays.map((_, i) => formatSessionName("Bri 4p", new Date(2027, 0, 10+i, 19, 30), { ...namingPreferences.value, schedules: [] }, 1)));
+    const moveGroup = (index: number, offset: number) => {
+      const groups = sessionNamePreferences.value.schedules;
+      const target = index + offset;
+      if (target < 0 || target >= groups.length) return;
+      const [group] = groups.splice(index, 1);
+      groups.splice(target, 0, group);
+    };
+    const groupPreview = (group: GroupSchedule) => {
+      const [h, m] = group.start.split(':').map(Number);
+      const sample = new Date(2027, 0, 10 + group.days[0], h, m);
+      return formatSessionName('Bri 4p', sample, { ...namingPreferences.value, customEnabled: false, schedules: [{ ...group, enabled: true }] }, 1);
+    };
+    const resetNamingTemplate = () => { sessionNamePreferences.value.template = defaultNameTemplate; };
+
+    const minimalistEnabled = ref(false);
+    const minimalistLoaded = ref(false);
+    const minimalistBusy = ref(false);
+    const minimalistError = ref("");
+    const loadMinimalistMode = async () => {
+      try {
+        minimalistEnabled.value = (await getMinimalistMode()).enabled;
+        minimalistLoaded.value = true;
+      } catch (error) { minimalistError.value = "Unable to read Minimalist Mode setting."; }
+    };
+    const updateMinimalistMode = async (value: boolean | null) => {
+      if (!minimalistLoaded.value || minimalistBusy.value) return;
+      minimalistBusy.value = true;
+      minimalistError.value = "";
+      try { minimalistEnabled.value = (await setMinimalistMode(value === true)).enabled; }
+      catch (error) { minimalistError.value = "Unable to change Minimalist Mode. The previous setting remains active."; }
+      finally { minimalistBusy.value = false; }
+    };
     const historyFolderPicking = ref(false);
     const historyFolderError = ref("");
     const browseHistoryFolder = async () => {
@@ -808,6 +918,7 @@ export default defineComponent({
     };
 
      onMounted(async () => {
+       void loadMinimalistMode();
        await fetchNics();
        await fetchStatus();
 
@@ -859,6 +970,8 @@ export default defineComponent({
 
     return {
       activeTab,
+      sessionNamePreferences, namingWeekdays, namingTemplateValid, defaultNamingPreview, namingPreviews, resetNamingTemplate, moveGroup, groupPreview, newGroupSchedule, validGroupSchedule,
+      minimalistEnabled, minimalistLoaded, minimalistBusy, minimalistError, updateMinimalistMode,
       personalBestSessionLimit, personalBestHistoryFolder, historyFolderPicking, historyFolderError, browseHistoryFolder,
       showHealingTab,
       showClassColorsForVisiblePlayers,

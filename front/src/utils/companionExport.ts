@@ -1,3 +1,4 @@
+import { PET_DAMAGE_SKILL_ID, PET_DAMAGE_SKILL_LABEL } from './petLabels';
 import { resolvePlayerArcana, resolvePlayerArcanaForIds } from './arcanaEncounter';
 import { findFahmesStages } from './fahmesRuin';
 import { findPhantasmRuns } from './phantasmEncounter';
@@ -30,6 +31,7 @@ function conditions(source: Record<number, ConditionStats> | undefined, origin: 
 }
 
 export function buildCompanionExport(summary: FightSummary, title: string, scope: string, names: Record<number,string>, targetId = '') {
+  if (summary.liveCompact) throw new Error('Load the saved session before exporting exact-hit evidence.');
   const start = finite(summary.startTime);
   const duration = finite(summary.encounterDuration);
   // Outgoing boss attack tracks do not represent party players or achievement
@@ -50,7 +52,7 @@ export function buildCompanionExport(summary: FightSummary, title: string, scope
         acc[key]=old?{...old,totalDamage:Number(old.totalDamage||0)+Number(v.totalDamage||0),count:Number(old.count||0)+Number(v.count||0),critCount:Number(old.critCount||0)+Number(v.critCount||0),totalDamageNonCrit:Number(old.totalDamageNonCrit||0)+Number(v.totalDamageNonCrit||0),totalDamageCrit:Number(old.totalDamageCrit||0)+Number(v.totalDamageCrit||0)}:{...v};
       }return acc;
     },{} as Record<number,any>) : (p.overallStats?.skills||{})).map(([id, stat]) => ({
-      skillId: Number(id), name: names[Number(id)] || null,
+      skillId: Number(id), name: names[Number(id)] || (Number(id) === PET_DAMAGE_SKILL_ID ? PET_DAMAGE_SKILL_LABEL : null),
       hitCount: Number(stat.count || 0), criticalHits: Number(stat.critCount || 0),
       totalDamage: Number(stat.totalDamage || 0), nonCriticalDamage: Number(stat.totalDamageNonCrit || 0),
       criticalDamage: Number(stat.totalDamageCrit || 0),
@@ -59,8 +61,8 @@ export function buildCompanionExport(summary: FightSummary, title: string, scope
     })),
     damageEvents: (targetId ? [] : (p.skillUses || [])).filter(e => Number.isFinite(Number(e.timestamp)) && Number(e.timestamp) >= 0).map(e => ({
       time: Number(e.timestamp), totalDamage: Number(e.totalDmg || 0),
-      skills: (e.skills || []).map((s: {skillId:number;damage:number;hitCount:number;critCount:number}) => ({
-        skillId: Number(s.skillId), damage: Number(s.damage || 0), hits: Number(s.hitCount || 0), crits: Number(s.critCount || 0)
+      skills: (e.skills || []).map((s: {skillId:number;damage:number;hitCount:number;critCount:number;petRaceId?:number;petName?:string}) => ({
+        skillId: Number(s.skillId), ...(s.skillId === PET_DAMAGE_SKILL_ID && s.petRaceId ? {petRaceId:s.petRaceId,petName:s.petName||null}:{}), damage: Number(s.damage || 0), hits: Number(s.hitCount || 0), crits: Number(s.critCount || 0)
       }))
     }))
   }));
